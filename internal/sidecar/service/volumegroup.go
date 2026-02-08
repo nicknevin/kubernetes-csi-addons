@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	kube "github.com/csi-addons/kubernetes-csi-addons/internal/kubernetes"
 	"github.com/csi-addons/kubernetes-csi-addons/internal/proto"
@@ -57,6 +58,7 @@ func (vg *VolumeGroupServer) CreateVolumeGroup(
 	ctx context.Context,
 	req *proto.CreateVolumeGroupRequest) (*proto.CreateVolumeGroupResponse, error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("CreateVolumeGroup request: %#v", req))
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, vg.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -96,6 +98,7 @@ func (vg *VolumeGroupServer) ModifyVolumeGroupMembership(
 	ctx context.Context,
 	req *proto.ModifyVolumeGroupMembershipRequest) (*proto.ModifyVolumeGroupMembershipResponse, error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("ModifyVolumeGroupMembership request: %#v", req))
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, vg.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -135,6 +138,7 @@ func (vg *VolumeGroupServer) DeleteVolumeGroup(
 	ctx context.Context,
 	req *proto.DeleteVolumeGroupRequest) (*proto.DeleteVolumeGroupResponse, error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("DeleteVolumeGroup request: %#v", req))
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, vg.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -161,6 +165,7 @@ func (vg *VolumeGroupServer) ControllerGetVolumeGroup(
 	ctx context.Context,
 	req *proto.ControllerGetVolumeGroupRequest) (*proto.ControllerGetVolumeGroupResponse, error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("ControllerGetVolumeGroup request: %#v", req))
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, vg.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {

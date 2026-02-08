@@ -106,6 +106,8 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return reconcile.Result{}, err
 	}
 
+	logger.Info(fmt.Sprintf("reconciling VolumeReplication instance %#v", instance))
+
 	// Get VolumeReplicationClass
 	vrcObj, err := r.getVolumeReplicationClass(logger, instance.Spec.VolumeReplicationClass)
 	if err != nil {
@@ -736,6 +738,8 @@ func (r *VolumeReplicationReconciler) disableVolumeReplication(vr *volumeReplica
 
 // enableReplication enable volume replication on the first reconcile.
 func (r *VolumeReplicationReconciler) enableReplication(vr *volumeReplicationInstance) error {
+	vr.logger.Info(fmt.Sprintf("enableReplication %#v", vr))
+
 	volumeReplication := replication.Replication{
 		Params: vr.commonRequestParameters,
 	}

@@ -110,7 +110,7 @@ func main() {
 	flag.IntVar(&cfg.CronJobStaggerWindow, util.CronJobStaggerWindowKey, cfg.CronJobStaggerWindow, "Duration, in hours, that the CronJobs for KeyRotation and ReclaimSpace are staggered within. Defaults to 2 hours, set as 0 to disable.")
 	opts := zap.Options{
 		Development: true,
-		TimeEncoder: zapcore.ISO8601TimeEncoder,
+		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
 	}
 	opts.BindFlags(flag.CommandLine)
 

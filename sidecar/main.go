@@ -32,7 +32,7 @@ import (
 	"github.com/csi-addons/kubernetes-csi-addons/sidecar/internal/csiaddonsnode"
 	"github.com/csi-addons/kubernetes-csi-addons/sidecar/internal/server"
 	sideutil "github.com/csi-addons/kubernetes-csi-addons/sidecar/internal/util"
-	"github.com/csi-addons/kubernetes-csi-addons/sidecar/internal/volume-condition"
+	condition "github.com/csi-addons/kubernetes-csi-addons/sidecar/internal/volume-condition"
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/standardflags"
@@ -94,7 +94,7 @@ func main() {
 	)
 	opts := zap.Options{
 		Development: true,
-		TimeEncoder: zapcore.ISO8601TimeEncoder,
+		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
 	}
 	opts.BindFlags(flag.CommandLine)
 

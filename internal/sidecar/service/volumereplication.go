@@ -18,6 +18,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	kube "github.com/csi-addons/kubernetes-csi-addons/internal/kubernetes"
 	"github.com/csi-addons/kubernetes-csi-addons/internal/proto"
@@ -57,8 +58,10 @@ func (rs *ReplicationServer) RegisterService(server grpc.ServiceRegistrar) {
 // CSI-Addons EnableVolumeReplication service.
 func (rs *ReplicationServer) EnableVolumeReplication(
 	ctx context.Context,
-	req *proto.EnableVolumeReplicationRequest) (*proto.EnableVolumeReplicationResponse, error) {
+	req *proto.EnableVolumeReplicationRequest) (ret_resp *proto.EnableVolumeReplicationResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("EnableVolumeReplication request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("EnableVolumeReplication response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -76,6 +79,8 @@ func (rs *ReplicationServer) EnableVolumeReplication(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	logger.Info(fmt.Sprintf("Enabling volume replication vol %#v volgrp %#v", repReq.ReplicationSource.GetVolume(), repReq.ReplicationSource.GetVolumegroup()))
+
 	_, err = rs.controllerClient.EnableVolumeReplication(ctx, repReq)
 
 	if err != nil {
@@ -83,6 +88,7 @@ func (rs *ReplicationServer) EnableVolumeReplication(
 		return nil, err
 	}
 
+	logger.Info("Enabled volume replication")
 	return &proto.EnableVolumeReplicationResponse{}, nil
 }
 
@@ -90,8 +96,10 @@ func (rs *ReplicationServer) EnableVolumeReplication(
 // CSI-Addons DisableVolumeReplication service.
 func (rs *ReplicationServer) DisableVolumeReplication(
 	ctx context.Context,
-	req *proto.DisableVolumeReplicationRequest) (*proto.DisableVolumeReplicationResponse, error) {
+	req *proto.DisableVolumeReplicationRequest) (ret_resp *proto.DisableVolumeReplicationResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("DisableVolumeReplication request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("DisableVolumeReplication response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -123,8 +131,10 @@ func (rs *ReplicationServer) DisableVolumeReplication(
 // CSI-Addons PromoteVolume service.
 func (rs *ReplicationServer) PromoteVolume(
 	ctx context.Context,
-	req *proto.PromoteVolumeRequest) (*proto.PromoteVolumeResponse, error) {
+	req *proto.PromoteVolumeRequest) (ret_resp *proto.PromoteVolumeResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("PromoteVolume request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("PromoteVolume response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -144,12 +154,15 @@ func (rs *ReplicationServer) PromoteVolume(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	logger.Info(fmt.Sprintf("Promoting volume vol %#v volgrp %#v", repReq.ReplicationSource.GetVolume(), repReq.ReplicationSource.GetVolumegroup()))
+
 	_, err = rs.controllerClient.PromoteVolume(ctx, repReq)
 	if err != nil {
 		logger.Error(err, "Failed to promote volume")
 		return nil, err
 	}
 
+	logger.Info("Promoted volume")
 	return &proto.PromoteVolumeResponse{}, nil
 }
 
@@ -157,8 +170,10 @@ func (rs *ReplicationServer) PromoteVolume(
 // CSI-Addons DemoteVolume service.
 func (rs *ReplicationServer) DemoteVolume(
 	ctx context.Context,
-	req *proto.DemoteVolumeRequest) (*proto.DemoteVolumeResponse, error) {
+	req *proto.DemoteVolumeRequest) (ret_resp *proto.DemoteVolumeResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("DemoteVolume request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("DemoteVolume response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -191,8 +206,10 @@ func (rs *ReplicationServer) DemoteVolume(
 // CSI-Addons ResyncVolume service.
 func (rs *ReplicationServer) ResyncVolume(
 	ctx context.Context,
-	req *proto.ResyncVolumeRequest) (*proto.ResyncVolumeResponse, error) {
+	req *proto.ResyncVolumeRequest) (ret_resp *proto.ResyncVolumeResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("ResyncVolume request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("ResyncVolume response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -227,8 +244,10 @@ func (rs *ReplicationServer) ResyncVolume(
 // CSI-Addons GetVolumeReplicationInfo service.
 func (rs *ReplicationServer) GetVolumeReplicationInfo(
 	ctx context.Context,
-	req *proto.GetVolumeReplicationInfoRequest) (*proto.GetVolumeReplicationInfoResponse, error) {
+	req *proto.GetVolumeReplicationInfoRequest) (ret_resp *proto.GetVolumeReplicationInfoResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("GetVolumeReplicationInfo request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("GetVolumeReplicationInfo response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {
@@ -270,8 +289,10 @@ func (rs *ReplicationServer) GetVolumeReplicationInfo(
 // CSI-Addons GetReplicationDestinationInfo service.
 func (rs *ReplicationServer) GetReplicationDestinationInfo(
 	ctx context.Context,
-	req *proto.GetReplicationDestinationInfoRequest) (*proto.GetReplicationDestinationInfoResponse, error) {
+	req *proto.GetReplicationDestinationInfoRequest) (ret_resp *proto.GetReplicationDestinationInfoResponse, ret_err error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("GetReplicationDestinationInfo request: %#v", req), "replicationSource", req.GetReplicationSource())
+	defer func() { logger.Info("GetReplicationDestinationInfo response", "response:", ret_resp, "error", ret_err) }()
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {

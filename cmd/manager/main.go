@@ -114,7 +114,7 @@ func main() {
 	flag.DurationVar(&cfg.VolumeHealthStaleThreshold, util.VolumeHealthStaleThresholdKey, cfg.VolumeHealthStaleThreshold, "Age after which a PVC volume health annotation is considered stale and eligible for cleanup")
 	opts := zap.Options{
 		Development: true,
-		TimeEncoder: zapcore.ISO8601TimeEncoder,
+		TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
 	}
 	opts.BindFlags(flag.CommandLine)
 

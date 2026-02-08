@@ -87,6 +87,8 @@ func (r *VolumeGroupReplicationContentReconciler) Reconcile(ctx context.Context,
 		return reconcile.Result{}, err
 	}
 
+	logger.Info("Reconciling VolumeGroupReplicationContent resource", "VGRC", instance)
+
 	volumeGroupClient, err := r.getVolumeGroupClient(ctx, instance.Spec.Provisioner)
 	if err != nil {
 		logger.Error(err, "Failed to get VolumeGroupClient")

@@ -25,8 +25,8 @@ sigs.k8s.io/controller-runtime v0.22.4      // Kubernetes controller testing
 The testing architecture is organized into several distinct test suites:
 
 #### Controller Test Suites
-- **[Replication Storage Suite](internal/controller/replication.storage/suite_test.go)** - Tests volume replication controllers
-- **[CSI-Addons Suite](internal/controller/csiaddons/suite_test.go)** - Tests CSI-Addons node and job controllers
+- **[Replication Storage Suite](/internal/controller/replication.storage/suite_test.go)** - Tests volume replication controllers
+- **[CSI-Addons Suite](/internal/controller/csiaddons/suite_test.go)** - Tests CSI-Addons node and job controllers
 
 #### Component Test Categories
 - **Unit Tests**: Individual component testing with mock dependencies
@@ -52,7 +52,7 @@ Integration testing uses `sigs.k8s.io/controller-runtime/pkg/envtest` which prov
 
 #### Mock and Fake Implementations
 The project implements comprehensive mocking through:
-- **[Fake Replication Client](internal/client/fake/replication.go)** - Mock CSI-Addons replication operations
+- **[Fake Replication Client](/internal/client/fake/replication.go)** - Mock CSI-Addons replication operations
 - **Fake CSI Drivers** - Simulated CSI driver responses
 - **Mock gRPC Services** - Stubbed service implementations
 
@@ -63,19 +63,19 @@ The project implements comprehensive mocking through:
 The project includes extensive replication sanity testing covering:
 
 #### Core Replication Operations Testing
-- **Enable Volume Replication** - [`TestEnableVolumeReplication`](internal/client/volume-replication_test.go)
-- **Disable Volume Replication** - [`TestDisableVolumeReplication`](internal/client/volume-replication_test.go)  
-- **Volume Promotion** - [`TestPromoteVolume`](internal/client/volume-replication_test.go)
-- **Volume Demotion** - [`TestDemoteVolume`](internal/client/volume-replication_test.go)
+- **Enable Volume Replication** - [`TestEnableVolumeReplication`](/internal/client/volume-replication_test.go#L1)
+- **Disable Volume Replication** - [`TestDisableVolumeReplication`](/internal/client/volume-replication_test.go#L1)  
+- **Volume Promotion** - [`TestPromoteVolume`](/internal/client/volume-replication_test.go#L1)
+- **Volume Demotion** - [`TestDemoteVolume`](/internal/client/volume-replication_test.go#L1)
 - **Volume Resync** - Tests resync operations and conflict resolution
 
 #### Volume Group Replication Testing
-- **[Volume Group Replication Tests](internal/controller/replication.storage/volumegroupreplication_test.go)**
-- **[Volume Group Replication Class Tests](internal/controller/replication.storage/volumegroupreplicationclass_test.go)**
+- **[Volume Group Replication Tests](/internal/controller/replication.storage/volumegroupreplication_test.go)**
+- **[Volume Group Replication Class Tests](/internal/controller/replication.storage/volumegroupreplicationclass_test.go)**
 
 #### Replication Controller Testing
-- **[Volume Replication Controller](internal/controller/replication.storage/volumereplication_test.go)** - Tests CR lifecycle management
-- **[Replication Source Configuration](internal/sidecar/service/volumereplication_test.go)** - Tests sidecar service functionality
+- **[Volume Replication Controller](/internal/controller/replication.storage/volumereplication_test.go)** - Tests CR lifecycle management
+- **[Replication Source Configuration](/internal/sidecar/service/volumereplication_test.go)** - Tests sidecar service functionality
 
 ### Test Coverage Areas
 
@@ -167,6 +167,15 @@ go test -v ./... -coverprofile cover.out
 ```
 
 ## Comparison with kubernetes-csi/csi-test
+
+### CSI-Test Framework Reference
+
+The **[kubernetes-csi/csi-test](https://github.com/kubernetes-csi/csi-test)** framework is the official CSI specification compliance testing suite developed by the Kubernetes CSI community. It provides comprehensive sanity and conformance tests for CSI driver implementations.
+
+**CSI-Test Framework Components:**
+- **[Sanity Tests](https://github.com/kubernetes-csi/csi-test/tree/master/pkg/sanity)** - Core CSI specification compliance testing
+- **[E2E Tests](https://github.com/kubernetes-csi/csi-test/tree/master/test)** - End-to-end CSI driver integration testing
+- **[Mock Driver](https://github.com/kubernetes-csi/csi-test/tree/master/mock)** - Reference mock CSI driver implementation
 
 ### Why Not Using csi-test Framework
 
@@ -308,8 +317,8 @@ When `USE_EXISTING_CLUSTER=true` is set:
 The framework **can test against actual CSI drivers** through its connection management system:
 
 **Components:**
-- **[Connection Pool](internal/connection/connection_pool.go)** - Manages gRPC connections to CSI-Addons sidecars
-- **[gRPC Connection Handler](internal/connection/connection.go)** - Direct communication with CSI driver sidecar services  
+- **[Connection Pool](/internal/connection/connection_pool.go)** - Manages gRPC connections to CSI-Addons sidecars
+- **[gRPC Connection Handler](/internal/connection/connection.go)** - Direct communication with CSI driver sidecar services  
 - **Socket/Network Endpoints** - Unix domain sockets or TCP connections to CSI sidecars
 
 **Real Driver Testing Setup:**
@@ -347,6 +356,217 @@ With real CSI drivers, tests can validate:
 - **Authentication/authorization** with service account tokens
 - **Resource constraints** and quota management
 
+## Test Implementation Categories
+
+### gRPC Communication Testing
+
+The CSI-Addons testing framework employs different approaches for gRPC communication testing:
+
+#### **Mock/Fake gRPC Clients**
+Most tests use simulated gRPC clients rather than real network connections:
+
+**Files Using Mock gRPC:**
+- **[volume-replication_test.go](/internal/client/volume-replication_test.go)** - Uses `fake.ReplicationClient` with mocked method responses
+- **[volumegroup-client_test.go](/internal/client/volumegroup-client_test.go)** - Mock volume group operations
+- **[volumereplication_test.go](/internal/sidecar/service/volumereplication_test.go)** - Service layer testing with fake responses
+
+**Mock Implementation Example:**
+```go
+mockedClient := &fake.ReplicationClient{
+    EnableVolumeReplicationMock: func(...) (*proto.EnableVolumeReplicationResponse, error) {
+        return &proto.EnableVolumeReplicationResponse{}, nil
+    },
+}
+```
+
+#### **Real gRPC Endpoint Testing**
+**Current Status: ❌ Not Implemented**
+
+No tests currently connect to actual gRPC endpoints or sidecar services. Missing test scenarios:
+- Socket connection validation (Unix domain sockets/TCP)
+- Network timeout and retry testing
+- Authentication token exchange
+- Connection pooling with real sidecars
+
+### Mock Testing Flow Architecture
+
+The local/mock testing setup provides a hybrid architecture that tests **real CSI-Addons controller logic** against **mock storage backend responses**:
+
+#### **Current Mock Architecture (What EXISTS)**
+
+```
+┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│   Test Code     │    │   CSI-Addons        │    │   Fake gRPC Client │
+│                 │───▶│   Controller         │───▶│   (No Network)      │
+│ - Create CRDs   │    │   (Real Code)        │    │   - Mock Responses  │
+│ - K8s API calls │    │ - Reconcile loops    │    │   - No Socket       │
+└─────────────────┘    │ - Resource mgmt      │    │   - No CSI Driver   │
+         │              └──────────────────────┘    └─────────────────────┘
+         ▼                                   
+┌─────────────────┐         
+│ EnvTest K8s API │         
+│ - Local API svr │         
+│ - Real etcd     │         
+│ - CRD schemas   │         
+└─────────────────┘         
+```
+
+#### **Mock Testing Component Breakdown:**
+
+**1. EnvTest Kubernetes API Server** ✅ **Real**
+- Creates **real local Kubernetes API server + etcd**
+- Installs actual CRDs from [`config/crd/bases/`](config/crd/bases/)
+- Processes real Kubernetes API calls
+- Manages resource lifecycle (CREATE/UPDATE/DELETE)
+
+**2. CSI-Addons Controllers** ✅ **Real Code**
+- **Real controller code** runs (not mocked)
+- Receives Kubernetes events and reconciles resources
+- Calls what it **thinks** are gRPC endpoints
+- Updates CRD status and annotations
+
+**3. Fake gRPC Client** ❌ **Mock Only**
+- **No real network sockets** - just Go function calls
+- **No CSI-Addons sidecar** - responses hardcoded
+- **No CSI driver** - storage operations faked
+
+#### **Mock Test Example Flow:**
+
+```go
+// 1. Test creates VolumeReplication CRD
+volumeReplication := &replicationv1alpha1.VolumeReplication{...}
+err := k8sClient.Create(ctx, volumeReplication)
+
+// 2. Controller reconciles and tries to call gRPC
+// Real controller code runs:
+func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) {
+    // Gets real VolumeReplication from EnvTest K8s API
+    vr := &replicationv1alpha1.VolumeReplication{}
+    err := r.Get(ctx, req.NamespacedName, vr)
+    
+    // Tries to call EnableVolumeReplication via connection pool
+    // BUT connection pool is injected with fake client:
+    resp, err := r.connectionPool.EnableVolumeReplication(...)
+}
+
+// 3. Fake client returns mock response
+mockedClient := &fake.ReplicationClient{
+    EnableVolumeReplicationMock: func(...) (*proto.EnableVolumeReplicationResponse, error) {
+        return &proto.EnableVolumeReplicationResponse{}, nil // Hardcoded success
+    },
+}
+```
+
+#### **What Mock Tests Validate:**
+
+**✅ Mock tests DO test:**
+- **Real CSI-Addons controller logic** - Full reconciliation loops
+- **Kubernetes API integration** - Real CRD lifecycle management  
+- **Resource state transitions** - Status updates and finalizers
+- **Controller error handling** - Retry logic and failure scenarios
+- **Parameter processing** - Configuration validation and parsing
+
+**❌ Mock tests do NOT test:**
+- **gRPC network communication** - No actual socket connections
+- **CSI driver integration** - No real storage operations  
+- **Connection management** - No connection pooling or timeouts
+- **Authentication flows** - No token exchange with sidecars
+- **Storage backend operations** - No actual volume replication
+
+#### **Testing Architecture Clarification:**
+
+The mock testing validates that **CSI-Addons controllers correctly orchestrate Kubernetes resources** and would make the right gRPC calls, but completely bypasses **the entire gRPC communication stack** to actual CSI drivers and storage backends.
+
+This provides excellent coverage for **controller logic validation** while maintaining fast test execution, but leaves a gap for **end-to-end integration testing** with real storage systems.
+
+### CRD Management in Tests
+
+The project uses different approaches for CRD availability during testing:
+
+#### **Test Suites with CRD Injection (EnvTest)**
+
+Two main test suites bootstrap local Kubernetes environments with automatic CRD installation:
+
+**1. CSI-Addons Controller Suite**
+- **Location**: [/internal/controller/csiaddons/suite_test.go](/internal/controller/csiaddons/suite_test.go)
+- **CRD Source**: `config/crd/bases/` directory
+- **Bootstrap Process**:
+```go
+testEnv = &envtest.Environment{
+    CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
+    ErrorIfCRDPathMissing: true,
+}
+err = csiaddonsv1alpha1.AddToScheme(scheme.Scheme)
+```
+
+**CRDs Automatically Installed:**
+- CSIAddonsNode
+- EncryptionKeyRotationJob/CronJob  
+- NetworkFence/NetworkFenceClass
+- ReclaimSpaceJob/CronJob
+
+**Tests Using These CRDs:**
+- [encryptionkeyrotationjob_controller_test.go](/internal/controller/csiaddons/encryptionkeyrotationjob_controller_test.go) - Creates/manipulates EncryptionKeyRotationJob resources
+- [encryptionkeyrotationcronjob_controller_test.go](/internal/controller/csiaddons/encryptionkeyrotationcronjob_controller_test.go) - CronJob lifecycle testing
+
+**2. Replication Storage Controller Suite**
+- **Location**: [/internal/controller/replication.storage/suite_test.go](/internal/controller/replication.storage/suite_test.go)
+- **CRD Source**: `config/crd/bases/` directory
+- **Bootstrap Process**:
+```go
+testEnv = &envtest.Environment{
+    CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
+}
+err = replicationv1alpha1.AddToScheme(scheme.Scheme)
+```
+
+**CRDs Automatically Installed:**
+- VolumeReplication/VolumeReplicationClass
+- VolumeGroupReplication/VolumeGroupReplicationClass/Content
+
+#### **Tests Expecting Pre-existing CRDs**
+
+**Real Cluster Mode (USE_EXISTING_CLUSTER=true)**
+
+When `USE_EXISTING_CLUSTER=true` is set:
+- Tests connect to actual Kubernetes cluster via `KUBECONFIG`
+- **CRDs must already exist** in the target cluster
+- Tests **do not install** CRDs automatically
+- Failure occurs if required CRDs are missing
+
+**Pre-deployment Requirements:**
+```bash
+# CRDs must be pre-installed in target cluster:
+kubectl apply -f config/crd/bases/
+```
+
+**Expected CRDs in Real Cluster:**
+- `csiaddons.openshift.io/v1alpha1` - All CSI-Addons CRDs
+- `replication.storage.openshift.io/v1alpha1` - All Replication CRDs
+
+#### **Fake Client Tests (No CRD Requirement)**
+
+Some tests use `sigs.k8s.io/controller-runtime/pkg/client/fake` which simulates Kubernetes API without requiring actual CRDs:
+
+**Files Using Fake Clients:**
+- [/internal/controller/replication.storage/volumegroupreplication_test.go](/internal/controller/replication.storage/volumegroupreplication_test.go) - Uses `fake.NewClientBuilder()`
+- Various reconciler unit tests
+
+**Fake Client Example:**
+```go
+scheme := createFakeScheme(t)
+client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(obj...).Build()
+```
+
+### Test Mode Comparison
+
+| Test Type | CRD Management | gRPC Communication | Use Case |
+|-----------|---------------|-------------------|----------|
+| **Unit Tests** | Fake Client (No CRDs) | Mock/Fake gRPC | Fast unit testing |
+| **EnvTest Integration** | Auto CRD Injection | Mock/Fake gRPC | Controller logic validation |
+| **Real Cluster Integration** | Pre-existing CRDs Required | Mock/Fake gRPC | Real cluster controller testing |
+| **Full E2E (Missing)** | Pre-existing CRDs Required | Real gRPC Endpoints | Complete integration validation |
+
 ## Current Test Implementation Analysis
 
 ### Test Layer Architecture
@@ -354,7 +574,7 @@ With real CSI drivers, tests can validate:
 The CSI-Addons tests operate at different integration levels:
 
 #### **Layer 1: Unit Tests - Mock gRPC Clients**
-- **Location**: [`internal/client/volume-replication_test.go`](internal/client/volume-replication_test.go)
+- **Location**: [/internal/client/volume-replication_test.go](/internal/client/volume-replication_test.go)
 - **Method**: Uses **fake/mock gRPC clients**, not real socket connections
 - **Coverage**: API method signatures, response handling, basic error cases
 - **Example**:
@@ -367,7 +587,7 @@ mockedEnableReplication := &fake.ReplicationClient{
 ```
 
 #### **Layer 2: Controller Integration Tests - Kubernetes APIs**
-- **Location**: [`internal/controller/replication.storage/volumegroupreplication_test.go`](internal/controller/replication.storage/volumegroupreplication_test.go)
+- **Location**: [/internal/controller/replication.storage/volumegroupreplication_test.go](/internal/controller/replication.storage/volumegroupreplication_test.go)
 - **Method**: Uses **Kubernetes client operations** with EnvTest
 - **Coverage**: CRD lifecycle, controller reconciliation, resource management
 - **Example**:
@@ -407,7 +627,7 @@ The project implements the following test categories:
 
 #### 1. Core Volume Replication API Tests
 
-**File: [internal/client/volume-replication_test.go](internal/client/volume-replication_test.go)**
+**File: [/internal/client/volume-replication_test.go](/internal/client/volume-replication_test.go)**
 
 | Test Function | API Operation | Scenarios Covered |
 |---------------|---------------|-------------------|
@@ -419,7 +639,7 @@ The project implements the following test categories:
 
 #### 2. Controller Integration Tests
 
-**File: [internal/controller/replication.storage/volumereplication_test.go](internal/controller/replication.storage/volumereplication_test.go)**
+**File: [/internal/controller/replication.storage/volumereplication_test.go](/internal/controller/replication.storage/volumereplication_test.go)**
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
@@ -427,7 +647,7 @@ The project implements the following test categories:
 
 #### 3. Volume Group Replication Tests
 
-**File: [internal/controller/replication.storage/volumegroupreplication_test.go](internal/controller/replication.storage/volumegroupreplication_test.go)**
+**File: [/internal/controller/replication.storage/volumegroupreplication_test.go](/internal/controller/replication.storage/volumegroupreplication_test.go)**
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
@@ -436,7 +656,7 @@ The project implements the following test categories:
 
 #### 4. Sidecar Service Tests
 
-**File: [internal/sidecar/service/volumereplication_test.go](internal/sidecar/service/volumereplication_test.go)**
+**File: [/internal/sidecar/service/volumereplication_test.go](/internal/sidecar/service/volumereplication_test.go)**
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
@@ -453,7 +673,7 @@ Various controller test files covering:
 
 ### Test Plan Analysis: CSI-Addons vs. Layer-1 VR Tests
 
-Based on the suggested test plan from [layer-1-vr-tests.md](https://github.com/nadavleva/csi_replication_certs/blob/main/docs/layer-1-vr-tests.md), here's a comprehensive comparison:
+Based on the suggested Layer-1 CSI Volume Replication test plan, here's a comprehensive comparison:
 
 #### **EnableVolumeReplication API Coverage**
 

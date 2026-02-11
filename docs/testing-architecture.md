@@ -307,7 +307,7 @@ make test
 When `USE_EXISTING_CLUSTER=true` is set:
 - Tests use the current `KUBECONFIG` configuration
 - Connect to real Kubernetes cluster APIs
-- Install CRDs on the target cluster
+- **Expect CRDs to already exist** in the target cluster
 - Can interact with deployed CSI-Addons components
 
 ### Testing Against Real CSI Drivers
@@ -380,7 +380,7 @@ mockedClient := &fake.ReplicationClient{
 ```
 
 #### **Real gRPC Endpoint Testing**
-**Current Status: ❌ Not Implemented**
+**Current Status: [NOT IMPLEMENTED]**
 
 No tests currently connect to actual gRPC endpoints or sidecar services. Missing test scenarios:
 - Socket connection validation (Unix domain sockets/TCP)
@@ -413,19 +413,19 @@ The local/mock testing setup provides a hybrid architecture that tests **real CS
 
 #### **Mock Testing Component Breakdown:**
 
-**1. EnvTest Kubernetes API Server** ✅ **Real**
+**1. EnvTest Kubernetes API Server** [REAL]
 - Creates **real local Kubernetes API server + etcd**
 - Installs actual CRDs from [`config/crd/bases/`](config/crd/bases/)
 - Processes real Kubernetes API calls
 - Manages resource lifecycle (CREATE/UPDATE/DELETE)
 
-**2. CSI-Addons Controllers** ✅ **Real Code**
+**2. CSI-Addons Controllers** [REAL CODE]
 - **Real controller code** runs (not mocked)
 - Receives Kubernetes events and reconciles resources
 - Calls what it **thinks** are gRPC endpoints
 - Updates CRD status and annotations
 
-**3. Fake gRPC Client** ❌ **Mock Only**
+**3. Fake gRPC Client** [MOCK ONLY]
 - **No real network sockets** - just Go function calls
 - **No CSI-Addons sidecar** - responses hardcoded
 - **No CSI driver** - storage operations faked
@@ -459,14 +459,14 @@ mockedClient := &fake.ReplicationClient{
 
 #### **What Mock Tests Validate:**
 
-**✅ Mock tests DO test:**
+**Mock tests DO test:**
 - **Real CSI-Addons controller logic** - Full reconciliation loops
 - **Kubernetes API integration** - Real CRD lifecycle management  
 - **Resource state transitions** - Status updates and finalizers
 - **Controller error handling** - Retry logic and failure scenarios
 - **Parameter processing** - Configuration validation and parsing
 
-**❌ Mock tests do NOT test:**
+**Mock tests do NOT test:**
 - **gRPC network communication** - No actual socket connections
 - **CSI driver integration** - No real storage operations  
 - **Connection management** - No connection pooling or timeouts
@@ -599,7 +599,7 @@ assert.Equal(t, volumeGroupReplication.Name, pvc.Annotations[...])
 
 #### **Layer 3: End-to-End Integration Tests - MISSING**
 - **Expected Flow**: `Controller CRD → ConnectionPool → gRPC Socket → Sidecar → CSI Driver`
-- **Current Status**: ❌ **Not Implemented**
+- **Current Status**: [NOT IMPLEMENTED]
 - **Missing Components**:
   - Real gRPC connection testing
   - Socket communication validation  
@@ -608,12 +608,12 @@ assert.Equal(t, volumeGroupReplication.Name, pvc.Annotations[...])
 
 ### Integration Testing Clarification
 
-**✅ What EXISTS:**
+**What EXISTS:**
 - **Controller Integration**: Controllers properly integrate with Kubernetes APIs via envtest
 - **Resource Management**: CRD creation, status updates, finalizers work correctly
 - **Reconciliation Logic**: Controller loops and event handling validated
 
-**❌ What's MISSING:**  
+**What's MISSING:**  
 - **gRPC Communication**: No testing of actual gRPC calls to sidecar services
 - **Connection Management**: No validation of socket connections and connection pooling
 - **End-to-End Flows**: No complete pipeline testing from CRD to CSI driver
@@ -631,11 +631,11 @@ The project implements the following test categories:
 
 | Test Function | API Operation | Scenarios Covered |
 |---------------|---------------|-------------------|
-| `TestEnableVolumeReplication` | EnableVolumeReplication | ✅ Success case<br>✅ Error handling |  
-| `TestDisableVolumeReplication` | DisableVolumeReplication | ✅ Success case<br>✅ Error handling |
-| `TestPromoteVolume` | PromoteVolume | ✅ Success case<br>✅ Force parameter<br>✅ Error handling |
-| `TestDemoteVolume` | DemoteVolume | ✅ Success case<br>✅ Error handling |
-| `TestResyncVolume` | ResyncVolume | ✅ Success case<br>✅ Error handling |
+| `TestEnableVolumeReplication` | EnableVolumeReplication | Success case<br>Error handling |  
+| `TestDisableVolumeReplication` | DisableVolumeReplication | Success case<br>Error handling |
+| `TestPromoteVolume` | PromoteVolume | Success case<br>Force parameter<br>Error handling |
+| `TestDemoteVolume` | DemoteVolume | Success case<br>Error handling |
+| `TestResyncVolume` | ResyncVolume | Success case<br>Error handling |
 
 #### 2. Controller Integration Tests
 
@@ -643,7 +643,7 @@ The project implements the following test categories:
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
-| `TestGetScheduledTime` | Schedule Parser | ✅ Valid scheduling intervals<br>✅ Default schedule handling<br>✅ Invalid parameter handling |
+| `TestGetScheduledTime` | Schedule Parser | Valid scheduling intervals<br>Default schedule handling<br>Invalid parameter handling |
 
 #### 3. Volume Group Replication Tests
 
@@ -651,8 +651,8 @@ The project implements the following test categories:
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
-| `TestVolumeGroupReplication` | Volume Group Controller | ✅ Group replication workflows |
-| `TestGetVolumeGroupReplicationClass` | VRG Class Management | ✅ Class configuration validation |
+| `TestVolumeGroupReplication` | Volume Group Controller | Group replication workflows |
+| `TestGetVolumeGroupReplicationClass` | VRG Class Management | Class configuration validation |
 
 #### 4. Sidecar Service Tests
 
@@ -660,7 +660,7 @@ The project implements the following test categories:
 
 | Test Function | Component | Coverage |
 |---------------|-----------|----------|
-| `Test_setReplicationSource` | Replication Source Config | ✅ Volume source configuration<br>✅ Volume group source configuration<br>✅ Nil parameter handling<br>✅ Error condition validation |
+| `Test_setReplicationSource` | Replication Source Config | Volume source configuration<br>Volume group source configuration<br>Nil parameter handling<br>Error condition validation |
 
 #### 5. Controller-Specific Tests
 
@@ -679,15 +679,15 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-E-001** | Enable snapshot mode | ❌ **Missing** | Need parameter-specific testing |
-| **L1-E-002** | Enable journal mode | ❌ **Missing** | Need parameter-specific testing |  
-| **L1-E-003** | Peer cluster unreachable | ❌ **Missing** | Network failure scenarios not implemented |
-| **L1-E-004** | Invalid interval parameter | ❌ **Missing** | Parameter validation testing needed |
-| **L1-E-005** | Already enabled volume (idempotent) | ❌ **Missing** | Idempotency testing not implemented |
-| **L1-E-006** | Secret reference missing/invalid | ❌ **Missing** | Authentication testing needed |
-| **L1-E-007** | Invalid mirroringMode parameter | ❌ **Missing** | Parameter validation missing |
-| **L1-E-008** | Future schedulingStartTime | ✅ **Partially Covered** | Schedule parsing exists but limited scenarios |
-| **L1-E-009** | Invalid schedulingStartTime format | ✅ **Partially Covered** | Basic parsing validation only |
+| **L1-E-001** | Enable snapshot mode | **Missing** | Need parameter-specific testing |
+| **L1-E-002** | Enable journal mode | **Missing** | Need parameter-specific testing |  
+| **L1-E-003** | Peer cluster unreachable | **Missing** | Network failure scenarios not implemented |
+| **L1-E-004** | Invalid interval parameter | **Missing** | Parameter validation testing needed |
+| **L1-E-005** | Already enabled volume (idempotent) | **Missing** | Idempotency testing not implemented |
+| **L1-E-006** | Secret reference missing/invalid | **Missing** | Authentication testing needed |
+| **L1-E-007** | Invalid mirroringMode parameter | **Missing** | Parameter validation missing |
+| **L1-E-008** | Future schedulingStartTime | **Partially Covered** | Schedule parsing exists but limited scenarios |
+| **L1-E-009** | Invalid schedulingStartTime format | **Partially Covered** | Basic parsing validation only |
 
 **Current Implementation:** Basic success/error testing only  
 **Suggested Coverage:** 9 comprehensive scenarios  
@@ -697,10 +697,10 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-DIS-001** | Disable active, peer up | ✅ **Basic Coverage** | Success case implemented |
-| **L1-DIS-002** | Disable secondary, peer up | ❌ **Missing** | Role-specific testing missing |
-| **L1-DIS-003** | Previously disabled (idempotent) | ❌ **Missing** | Idempotency not tested |
-| **L1-DIS-004-016** | Various force/peer down scenarios | ❌ **Missing** | Force parameter and network failure scenarios |
+| **L1-DIS-001** | Disable active, peer up | **Basic Coverage** | Success case implemented |
+| **L1-DIS-002** | Disable secondary, peer up | **Missing** | Role-specific testing missing |
+| **L1-DIS-003** | Previously disabled (idempotent) | **Missing** | Idempotency not tested |
+| **L1-DIS-004-016** | Various force/peer down scenarios | **Missing** | Force parameter and network failure scenarios |
 
 **Current Implementation:** Basic success/error testing  
 **Suggested Coverage:** 16 comprehensive scenarios  
@@ -710,10 +710,10 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-PROM-001** | Promote secondary→primary, healthy | ✅ **Basic Coverage** | Success case implemented |  
-| **L1-PROM-002** | Promote already primary (idempotent) | ❌ **Missing** | Idempotency testing missing |
-| **L1-PROM-003** | Promote secondary, peer down, force=false | ❌ **Missing** | Network failure scenarios missing |
-| **L1-PROM-004-008** | Force promotion and workload scenarios | ❌ **Missing** | Advanced force/workload scenarios missing |
+| **L1-PROM-001** | Promote secondary→primary, healthy | **Basic Coverage** | Success case implemented |  
+| **L1-PROM-002** | Promote already primary (idempotent) | **Missing** | Idempotency testing missing |
+| **L1-PROM-003** | Promote secondary, peer down, force=false | **Missing** | Network failure scenarios missing |
+| **L1-PROM-004-008** | Force promotion and workload scenarios | **Missing** | Advanced force/workload scenarios missing |
 
 **Current Implementation:** Basic success/error + force parameter  
 **Suggested Coverage:** 8 comprehensive scenarios  
@@ -723,8 +723,8 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-DEM-001** | Demote primary→secondary, healthy | ✅ **Basic Coverage** | Success case implemented |
-| **L1-DEM-002-008** | Idempotency, force, and workload scenarios | ❌ **Missing** | Advanced scenarios missing |
+| **L1-DEM-001** | Demote primary→secondary, healthy | **Basic Coverage** | Success case implemented |
+| **L1-DEM-002-008** | Idempotency, force, and workload scenarios | **Missing** | Advanced scenarios missing |
 
 **Current Implementation:** Basic success/error testing  
 **Suggested Coverage:** 8 comprehensive scenarios  
@@ -734,8 +734,8 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-RSYNC-001** | Resync after split-brain | ❌ **Missing** | Conflict resolution not tested |
-| **L1-RSYNC-002+** | Additional resync scenarios | ❌ **Missing** | Extended scenarios not implemented |
+| **L1-RSYNC-001** | Resync after split-brain | **Missing** | Conflict resolution not tested |
+| **L1-RSYNC-002+** | Additional resync scenarios | **Missing** | Extended scenarios not implemented |
 
 **Current Implementation:** Basic success/error testing only  
 **Suggested Coverage:** 2+ comprehensive scenarios  
@@ -745,7 +745,7 @@ Based on the suggested Layer-1 CSI Volume Replication test plan, here's a compre
 
 | Suggested Test ID | Scenario | CSI-Addons Status | Gap Analysis |
 |-------------------|----------|-------------------|--------------|
-| **L1-INFO-001-014** | All info query scenarios | ❌ **Not Implemented** | API not tested at all |
+| **L1-INFO-001-014** | All info query scenarios | **Not Implemented** | API not tested at all |
 
 **Current Implementation:** **No tests exist**  
 **Suggested Coverage:** 14 comprehensive scenarios  

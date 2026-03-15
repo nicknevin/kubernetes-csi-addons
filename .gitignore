@@ -28,5 +28,10 @@ config/manifests/bases/csi-addons.clusterserviceversion.yaml
 # editor and IDE paraphernalia
 .idea
 *.swp
+
+# Temporary work files
+Temp/
 *.swo
 *~
+Reports/
+Logs/

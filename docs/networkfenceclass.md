@@ -22,7 +22,16 @@ spec:
 - `provisioner`: specifies the name of storage provisioner.
 - `parameters`: specifies storage provider specific parameters.
 
-Resereved parameters:
+**Ceph CSI (Rook):** The Ceph CSI driver requires `clusterID` in parameters for network fencing. For Rook, use the cluster namespace (e.g. `rook-ceph`):
+
+```yaml
+parameters:
+  clusterID: rook-ceph
+  csiaddons.openshift.io/networkfence-secret-name: rook-csi-cephfs-provisioner
+  csiaddons.openshift.io/networkfence-secret-namespace: rook-ceph
+```
+
+Reserved parameters:
 
 - `csiaddons.openshift.io/networkfence-secret-name`: specifies the name of the secret required for network fencing operation.
 - `csiaddons.openshift.io/networkfence-secret-namespace`: specifies the namespace in which the secret is located.

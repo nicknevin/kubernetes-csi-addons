@@ -149,6 +149,20 @@ test: manifests generate docker-generate-protobuf fmt vet envtest ## Run tests.
 	echo "running tests"
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test -v $$(go list ./... | grep -v "test/e2e") -coverprofile cover.out
 
+.PHONY: test-replication-cluster
+test-replication-cluster: manifests generate fmt vet envtest ## Run replication tests against existing cluster (USE_EXISTING_CLUSTER=true). Requires KUBECONFIG and CRDs installed. Output is logged to Logs/.
+	@mkdir -p Logs && LOG=Logs/test-replication-cluster_$$(date +%Y%m%d_%H%M%S).log && \
+	USE_EXISTING_CLUSTER=true go test -v ./internal/controller/replication.storage/... ./internal/client/... 2>&1 | tee "$$LOG"; \
+	RC=$${PIPESTATUS[0]}; echo "Log: $$LOG"; exit $$RC
+
+.PHONY: test-replication-e2e
+test-replication-e2e: manifests generate fmt vet ## Run replication E2E suite against existing cluster. Requires KUBECONFIG, CRDs, controller and CSI driver. Logs to Logs/ with verbose output, per-spec progress, and a detailed summary. Use GINKGO_FOCUS to run specific tests (e.g. make test-replication-e2e GINKGO_FOCUS="L1-E-001"). Use GINKGO_VERBOSE=vv for maximal verbosity.
+	@bash ./hack/run-replication-e2e.sh
+
+.PHONY: clean-replication-e2e
+clean-replication-e2e: ## Remove leftover PVCs, VRs, snapshots and test VRCs from e2e-replication-* namespaces. Run before a fresh E2E run. For dry-run: ./hack/clean-replication-e2e-resources.sh --dry-run
+	@bash ./hack/clean-replication-e2e-resources.sh
+
 .PHONY: check-all-committed
 check-all-committed: ## Fail in case there are uncommitted changes
 	test -z "$(shell git status --short)" || (echo "files were modified: " ; git status --short ; false)

@@ -15,6 +15,8 @@ The `fenceState` field in the NetworkFence spec explicitly specifies the desired
 `Fenced` or `Unfenced`. Setting `fenceState` to `Fenced` blocks access to the corresponding CIDR blocks, while
 setting it to `Unfenced` unblocks them.
 
+The creation of NetworkFence CR will add a network fence. To unfence the CIDRs, update the `fenceState` field to `Unfenced`. Deletion of the CR no longer triggers UnfenceClusterNetwork; the controller removes the finalizer and skips reconciliation.
+
 ## Fence Operation
 
 ```yaml
@@ -38,6 +40,8 @@ spec:
   parameters:
     key: value
 ```
+
+> **Note**: Creation of a NetworkFence CR blocks access to the corresponding CIDR block. To unblock, set `spec.fenceState: Unfenced`.
 
 ## Unfence Operation
 

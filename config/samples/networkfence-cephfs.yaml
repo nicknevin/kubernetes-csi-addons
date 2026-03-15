@@ -1,0 +1,19 @@
+# NetworkFence for L1-E-003 (peer unreachable) test
+# Uses rook-cephfs-fence-class and blocks the storage node (dr2: 192.168.122.164)
+#
+# PREREQUISITE: NetworkFenceClass must include clusterID for Ceph CSI:
+#   kubectl patch networkfenceclass rook-cephfs-fence-class --type=merge -p '{"spec":{"parameters":{"clusterID":"rook-ceph","csiaddons.openshift.io/networkfence-secret-name":"rook-csi-cephfs-provisioner","csiaddons.openshift.io/networkfence-secret-namespace":"rook-ceph"}}}'
+#
+# Apply: kubectl apply -f config/samples/networkfence-cephfs.yaml
+# Unfence: kubectl patch networkfence test-fence-cephfs -p '{"spec":{"fenceState":"Unfenced"}}' --type=merge
+# Remove: kubectl delete -f config/samples/networkfence-cephfs.yaml (after unfencing)
+#
+apiVersion: csiaddons.openshift.io/v1alpha1
+kind: NetworkFence
+metadata:
+  name: test-fence-cephfs
+spec:
+  networkFenceClassName: rook-cephfs-fence-class
+  cidrs:
+    - 192.168.122.164/32   # dr2 node (storage node)
+  fenceState: Fenced

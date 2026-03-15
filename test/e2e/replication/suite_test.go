@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -41,6 +42,7 @@ import (
 
 	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
 
 // Cluster names for full-DR mode (when DR1_CONTEXT and DR2_CONTEXT are both set).
@@ -48,6 +50,31 @@ const (
 	ClusterDR1 = "dr1"
 	ClusterDR2 = "dr2"
 )
+
+// findProjectRoot locates the project root by searching for go.mod file
+// starting from the current working directory and moving up the directory tree.
+func findProjectRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for dir := cwd; ; {
+		gomod := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(gomod); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached the root of the filesystem
+			break
+		}
+		dir = parent
+	}
+
+	return "", fmt.Errorf("go.mod not found")
+}
 
 var (
 	cfg                            *rest.Config
@@ -61,9 +88,24 @@ var (
 	networkFenceSupportProvisioner string // provisioner used for cached check
 	sigChan                        chan os.Signal
 	cleanupNamespaces              []string // track test namespaces for forced-termination cleanup
+	progressReporter               *helpers.ProgressReporter
+	reportDir                      string
 )
 
 func init() {
+	// Initialize reportDir to root Reports directory
+	// Try to use REPORTS_DIR environment variable, otherwise find project root
+	reportDir = os.Getenv("REPORTS_DIR")
+	if reportDir == "" {
+		// Find project root by locating go.mod
+		if projectRoot, err := findProjectRoot(); err == nil {
+			reportDir = filepath.Join(projectRoot, "Reports")
+		} else {
+			// Fallback to relative path
+			reportDir = helpers.DefaultReportDirName
+		}
+	}
+
 	// Setup signal handler for graceful cleanup on forced termination (SIGTERM, SIGINT)
 	// This catches termination signals before process is killed
 	sigChan = make(chan os.Signal, 1)
@@ -78,8 +120,24 @@ func init() {
 }
 
 func TestReplicationE2E(t *testing.T) {
+	// Create progress reporter
+	progressReporter = helpers.NewProgressReporter(reportDir)
+	progressReporter.SetStartMsg("Replication E2E Test Suite")
+
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Replication E2E Suite")
+
+	// Configure Ginkgo with JUnit reporter
+	suiteConfig, reporterConfig := GinkgoConfiguration()
+
+	// Set up JUnit report file
+	junitReportPath := filepath.Join(reportDir, "junit_report.xml")
+	reporterConfig.JUnitReport = junitReportPath
+
+	// Run specs
+	RunSpecs(t, "Replication E2E Suite", suiteConfig, reporterConfig)
+
+	// Final progress report
+	progressReporter.SetEndMsg("Replication E2E Test Suite")
 }
 
 var _ = BeforeSuite(func() {
@@ -139,7 +197,17 @@ var _ = BeforeSuite(func() {
 	Logf("[SETUP]", "NetworkFence support = %v (provisioner=%q)", isSupported, testEnv.Provisioner)
 })
 
-// ReportAfterEach logs each spec's completion for progress visibility in logs.
+// ReportBeforeSuite sets the total test count at the beginning of the suite
+var _ = ReportBeforeSuite(func(report Report) {
+	progressReporter.SetTestsTotal(report.PreRunStats.SpecsThatWillRun)
+})
+
+// ReportAfterEach tracks individual spec results for real-time progress
+var _ = ReportAfterEach(func(report SpecReport) {
+	progressReporter.ProcessSpecReport(report)
+})
+
+// ReportAfterEachLegacy logs each spec's completion for progress visibility in logs.
 var _ = ReportAfterEach(func(report types.SpecReport) {
 	stateStr := report.State.String()
 	dur := report.RunTime.Round(time.Millisecond)

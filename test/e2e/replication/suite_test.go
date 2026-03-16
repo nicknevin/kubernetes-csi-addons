@@ -129,8 +129,9 @@ func TestReplicationE2E(t *testing.T) {
 	// Configure Ginkgo with JUnit reporter
 	suiteConfig, reporterConfig := GinkgoConfiguration()
 
-	// Set up JUnit report file
-	junitReportPath := filepath.Join(reportDir, "junit_report.xml")
+	// Set up JUnit report file with timestamp to avoid overwriting previous runs
+	timestamp := time.Now().Format("2006-01-02T15-04-05")
+	junitReportPath := filepath.Join(reportDir, fmt.Sprintf("junit_report_%s.xml", timestamp))
 	reporterConfig.JUnitReport = junitReportPath
 
 	// Run specs

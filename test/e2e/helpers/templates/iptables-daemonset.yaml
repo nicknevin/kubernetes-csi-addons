@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-addons-iptables-manager
+  namespace: {{ .Namespace }}
+  labels:
+    app: csi-addons-iptables-manager
+    csi-addons.io/component: fault-injection
+    csi-addons.io/fault-injector: iptables
+spec:
+  selector:
+    matchLabels:
+      app: csi-addons-iptables-manager
+  template:
+    metadata:
+      labels:
+        app: csi-addons-iptables-manager
+    spec:
+      hostNetwork: true
+      {{- if .NodeSelector }}
+      nodeSelector:
+        {{- range $key, $value := .NodeSelector }}
+        {{ $key }}: {{ $value }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsUser: 0
+      containers:
+      - name: iptables-manager
+        image: {{ .Image }}
+        command:
+        - sh
+        - -c
+        - |
+          echo 'CSI-Addons Iptables Manager starting...';
+          echo 'Iptables version:'; iptables --version &&
+          echo 'Available tools:'; which iptables ping nc nslookup &&
+          echo 'Creating readiness marker...';
+          touch /tmp/iptables-ready &&
+          echo 'Starting iptables rules monitoring loop...';
+          while true; do
+            if [ -f /rules/apply.sh ]; then
+              echo '[$(date)] Executing /rules/apply.sh';
+              chmod +x /rules/apply.sh && /rules/apply.sh 2>&1 | tee -a /var/log/iptables.log;
+            else
+              echo '[$(date)] No rules file found, waiting...';
+            fi;
+            sleep 10;
+          done
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - test -f /tmp/iptables-ready && iptables --version
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - test -f /tmp/iptables-ready
+          initialDelaySeconds: 1
+          periodSeconds: 1
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 10
+        volumeMounts:
+        - name: iptables-rules
+          mountPath: /rules
+          readOnly: true
+        - name: tmp-dir
+          mountPath: /tmp
+      tolerations:
+      - operator: Exists
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: iptables-rules
+        configMap:
+          name: csi-addons-iptables-manager-rules
+          defaultMode: 0755
+      - name: tmp-dir
+        emptyDir: {}

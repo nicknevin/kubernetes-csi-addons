@@ -212,6 +212,10 @@ docker-generate-protobuf: container-cmd ./build/Containerfile.tools
 	$(CONTAINER_CMD) build -f ./build/Containerfile.tools -t ${TOOLS_IMG} .
 	$(CONTAINER_CMD) run --rm -ti --volume=${PWD}:/go/src/github.com/csi-addons/kubernetes-csi-addons:Z ${TOOLS_IMG} make generate-protobuf
 
+.PHONY: docker-build-iptables
+docker-build-iptables: container-cmd ./build/Containerfile.iptables ## Build custom iptables image for E2E testing
+	$(CONTAINER_CMD) build -f ./build/Containerfile.iptables -t csi-addons/iptables-manager:latest ./build/
+
 ##@ Deployment
 
 ifndef ignore-not-found

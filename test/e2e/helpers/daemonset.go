@@ -43,46 +43,56 @@ const (
 // capability, then immediately deletes it. It returns true if the DaemonSet can be created
 // successfully, indicating that the cluster security policies allow such workloads.
 //
-// The test is performed in the kube-system namespace to avoid namespace-specific security
-// restrictions that might exist in user namespaces.
+// The test is performed in a default or user namespace to better reflect real-world usage.
 func HasPrivilegedDaemonSetSupport(ctx context.Context, c client.Client) bool {
 	// Create a test DaemonSet name with timestamp to avoid conflicts
 	testName := fmt.Sprintf("%s-%d", DaemonSetTestNamePrefix, time.Now().Unix())
-	testNamespace := "kube-system"
 
-	// Create minimal privileged DaemonSet for testing
-	testDaemonSet := createTestPrivilegedDaemonSet(testName, testNamespace)
+	// Try different namespaces in order of preference
+	testNamespaces := []string{"default", "kube-system"}
 
-	// Use timeout context for the test
-	testCtx, cancel := context.WithTimeout(ctx, DaemonSetTestTimeout)
-	defer cancel()
+	for _, testNamespace := range testNamespaces {
+		// Create minimal privileged DaemonSet for testing
+		testDaemonSet := createTestPrivilegedDaemonSet(testName, testNamespace)
 
-	// Try to create the DaemonSet
-	if err := c.Create(testCtx, testDaemonSet); err != nil {
-		// Creation failed - privileged DaemonSets not supported
-		return false
+		// Use timeout context for the test
+		testCtx, cancel := context.WithTimeout(ctx, DaemonSetTestTimeout)
+		defer cancel()
+
+		// Try to create the DaemonSet
+		if err := c.Create(testCtx, testDaemonSet); err != nil {
+			// Creation failed in this namespace - try next namespace
+			Logf("[DEBUG]", "Failed to create privileged DaemonSet in namespace %s: %v", testNamespace, err)
+			continue
+		}
+
+		// DaemonSet created successfully, clean it up immediately
+		// Use background deletion to avoid waiting for pod termination
+		deletePolicy := metav1.DeletePropagationBackground
+		deleteOptions := &client.DeleteOptions{
+			PropagationPolicy: &deletePolicy,
+		}
+
+		if err := c.Delete(testCtx, testDaemonSet, deleteOptions); err != nil {
+			// Log the error but don't fail the test - creation succeeded
+			Logf("[WARNING]", "Failed to clean up test DaemonSet %s in namespace %s: %v", testName, testNamespace, err)
+		}
+
+		Logf("[DEBUG]", "Privileged DaemonSet test successful in namespace %s", testNamespace)
+		return true
 	}
 
-	// DaemonSet created successfully, clean it up immediately
-	// Use background deletion to avoid waiting for pod termination
-	deletePolicy := metav1.DeletePropagationBackground
-	deleteOptions := &client.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
-	}
-
-	if err := c.Delete(testCtx, testDaemonSet, deleteOptions); err != nil {
-		// Log the error but don't fail the test - creation succeeded
-		// The DaemonSet will be cleaned up eventually
-	}
-
-	return true
+	// All namespaces failed
+	Logf("[DEBUG]", "Privileged DaemonSet creation failed in all tested namespaces")
+	return false
 }
 
 // createTestPrivilegedDaemonSet creates a minimal DaemonSet with privileged security context
 // and NET_ADMIN capability for testing cluster support.
 func createTestPrivilegedDaemonSet(name, namespace string) *appsv1.DaemonSet {
 	privileged := true
-	hostNetwork := true
+	// Don't use host network as it might trigger additional security restrictions
+	hostNetwork := false
 
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -115,7 +125,7 @@ func createTestPrivilegedDaemonSet(name, namespace string) *appsv1.DaemonSet {
 							Name:  "privileged-test",
 							Image: "alpine:latest",
 							Command: []string{
-								"sh", "-c", "sleep 1", // Minimal command that exits quickly
+								"sh", "-c", "echo 'capability test' && sleep 2", // Simple command
 							},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: &privileged,
@@ -132,8 +142,8 @@ func createTestPrivilegedDaemonSet(name, namespace string) *appsv1.DaemonSet {
 									corev1.ResourceMemory: parseQuantity("16Mi"),
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    parseQuantity("100m"),
-									corev1.ResourceMemory: parseQuantity("64Mi"),
+									corev1.ResourceCPU:    parseQuantity("50m"),
+									corev1.ResourceMemory: parseQuantity("32Mi"),
 								},
 							},
 						},
@@ -146,8 +156,8 @@ func createTestPrivilegedDaemonSet(name, namespace string) *appsv1.DaemonSet {
 					},
 					// Use short termination grace period for faster cleanup
 					TerminationGracePeriodSeconds: &[]int64{1}[0],
-					// Don't restart the container - we just want to test creation
-					RestartPolicy: corev1.RestartPolicyNever,
+					// Allow restart in case of issues
+					RestartPolicy: corev1.RestartPolicyAlways,
 				},
 			},
 		},

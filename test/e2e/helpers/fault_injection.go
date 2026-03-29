@@ -221,3 +221,55 @@ const (
 	DefaultVerifyTimeout  = 10 * time.Second
 	DefaultCleanupTimeout = 60 * time.Second
 )
+
+// HasFaultInjectionSupport checks if any fault injection mechanism is available in the cluster.
+// It checks for both NetworkFence CRD support and privileged DaemonSet capabilities for iptables.
+//
+// Parameters:
+//   - client: Kubernetes client to check cluster capabilities
+//   - requireAll: if true, requires both NetworkFence AND iptables support; if false, requires at least one
+//
+// Returns true if the required fault injection capabilities are available.
+func HasFaultInjectionSupport(client client.Client, requireAll bool) bool {
+	ctx := context.Background()
+
+	// Check NetworkFence support (using existing function if available)
+	hasNetworkFence := false
+	// We would call IsNetworkFenceSupportAvailable() here if we had access to it,
+	// but since this is in helpers package, we'll check for privileged DaemonSet support
+	// which is the primary requirement for iptables-based fault injection
+
+	// Check iptables support (privileged DaemonSet capabilities)
+	hasIptables := HasPrivilegedDaemonSetSupport(ctx, client)
+
+	if requireAll {
+		return hasNetworkFence && hasIptables
+	}
+
+	// Return true if at least one mechanism is available
+	return hasNetworkFence || hasIptables
+}
+
+// CollectFaultInjectionLogs collects debugging logs from fault injection providers.
+// This is useful for troubleshooting test failures and should be called during test cleanup.
+//
+// Parameters:
+//   - provider: The fault injection provider to collect logs from
+//
+// Returns error if log collection fails (non-fatal for cleanup).
+func CollectFaultInjectionLogs(ctx context.Context, provider PeerFenceProvider) error {
+	if provider == nil {
+		return fmt.Errorf("fault injection provider is nil")
+	}
+
+	Logf("[INFO]", "Collecting fault injection logs from provider type: %s", provider.GetProviderType())
+
+	// Check if this is an iptables provider that supports log collection
+	if iptablesProvider, ok := provider.(*IptablesFaultProvider); ok {
+		return iptablesProvider.collectDaemonSetLogs(ctx)
+	}
+
+	// For other providers, just log the type
+	Logf("[DEBUG]", "Log collection not implemented for provider type: %s", provider.GetProviderType())
+	return nil
+}

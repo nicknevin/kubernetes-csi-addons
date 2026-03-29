@@ -29,6 +29,7 @@ import (
 
 	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
 
 var _ = Describe("PromoteVolumeReplication", func() {
@@ -363,13 +364,13 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			By("Starting L1-PROM-003: Promote secondary to primary with peer unreachable (force=false)")
 			SkipIfNotFullDR("L1-PROM-003", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
 
-			By("Checking that the driver supports NetworkFence")
-			if !IsNetworkFenceSupportAvailable() {
-				Skip("L1-PROM-003 requires NetworkFence and NetworkFenceClass CRDs to be installed and the CSI driver to advertise network_fence.NETWORK_FENCE in CSIAddonsNode status.capabilities.")
-			}
-
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
 			cDR2 := GetK8sClientForCluster(ClusterDR2)
+
+			By("Checking that fault injection capabilities are available")
+			if !IsNetworkFenceSupportAvailable() && !helpers.HasPrivilegedDaemonSetSupport(ctx, cDR2) {
+				Skip("L1-PROM-003 requires either NetworkFence support or privileged DaemonSet capabilities for iptables fault injection")
+			}
 
 			nsName := UniqueNamespace()
 			By("Creating namespace on both DR1 and DR2")
@@ -403,13 +404,29 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
+			// Initialize fault injection provider for peer fencing
+			var faultProvider helpers.PeerFenceProvider
+			var err error
+			var cidrs []string
 
 			DeferCleanup(func() {
-				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf, vrDR2)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
+				cleanupCtx := context.Background() // Collect fault injection logs for debugging before cleanup
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-004 cleanup: %v", err)
+					}
+				} // Collect fault injection logs for debugging before cleanup
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-003 cleanup: %v", err)
+					}
+				}
+				// Clean up any remaining fences during cleanup
+				if faultProvider != nil && len(cidrs) > 0 {
+					for _, cidr := range cidrs {
+						_ = faultProvider.UnfenceIP(cleanupCtx, cidr, nil)
+					}
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -421,25 +438,40 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR2] Creating NetworkFenceClass to fence peer cluster")
-			nfcName := "nfc-prom-003-" + nsName
-			nfc = CreateNetworkFenceClass(ctx, cDR2, nfcName, env.Provisioner, secretName, secretNs)
-
 			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
+			cidrs = GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-003 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
 			}
 
-			nfName := "nf-prom-003-" + nsName
-			By("[DR2] Creating NetworkFence (Fenced) to block peer cluster access")
-			nf = CreateNetworkFence(ctx, cDR2, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-			By("[DR2] Waiting for NetworkFence to report Succeeded")
-			WaitForNetworkFenceResult(ctx, cDR2, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			By(fmt.Sprintf("[DR2] Using CIDRs for peer cluster fencing: %v", cidrs))
+
+			By("[DR2] Initializing fault injection provider")
+			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+				Client: cDR2,
+			})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
+
+			By("[DR2] Fencing peer cluster to simulate network partition")
+			for _, cidr := range cidrs {
+				err = faultProvider.FenceIP(ctx, cidr, nil)
+				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
+			}
+
+			// Verify that fencing is effective
+			Eventually(func() bool {
+				for _, cidr := range cidrs {
+					fenced, err := faultProvider.VerifyConnectivity(ctx, cidr, true)
+					if err != nil || !fenced {
+						return false
+					}
+				}
+				return true
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Network should be fenced successfully")
 
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=false; should fail)")
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Primary
-			err := cDR2.Update(ctx, vrDR2)
+			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("[DR2] Waiting for VR to report error (FailedToPromote or peer unreachable)")
@@ -453,11 +485,22 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Expect(vrDR2.Status.State).NotTo(Equal(replicationv1alpha1.PrimaryState),
 				"L1-PROM-003: VR state should not change to Primary when peer is unreachable with force=false")
 
-			By("[DR2] Unfencing by setting NetworkFence state to Unfenced")
-			UnfenceNetworkFence(ctx, cDR2, nf)
+			By("[DR2] Unfencing peer cluster to restore connectivity")
+			for _, cidr := range cidrs {
+				err = faultProvider.UnfenceIP(ctx, cidr, nil)
+				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
+			}
 
-			By("[DR2] Waiting for NetworkFence unfence operation to complete successfully")
-			WaitForNetworkFenceResult(ctx, cDR2, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			// Verify connectivity is restored
+			Eventually(func() bool {
+				for _, cidr := range cidrs {
+					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false)
+					if err != nil || !connected {
+						return false
+					}
+				}
+				return true
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Connectivity should be restored after unfencing")
 
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
@@ -509,13 +552,18 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			By("Starting L1-PROM-004: Promote secondary to primary with peer unreachable (force=true)")
 			SkipIfNotFullDR("L1-PROM-004", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
 
-			By("Checking that the driver supports NetworkFence")
-			if !IsNetworkFenceSupportAvailable() {
-				Skip("L1-PROM-004 requires NetworkFence and NetworkFenceClass CRDs to be installed and the CSI driver to advertise network_fence.NETWORK_FENCE in CSIAddonsNode status.capabilities.")
+			By("Checking that fault injection is available")
+			// Check that either NetworkFence or iptables fault injection is available
+			if !IsNetworkFenceSupportAvailable() && !helpers.HasPrivilegedDaemonSetSupport(ctx, GetK8sClient()) {
+				Skip("L1-PROM-004 requires either NetworkFence support or privileged DaemonSet capabilities for iptables fault injection")
 			}
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
 			cDR2 := GetK8sClientForCluster(ClusterDR2)
+
+			// Initialize fault injection provider variables
+			var faultProvider helpers.PeerFenceProvider
+			var err error
 
 			nsName := UniqueNamespace()
 			By("Creating namespace on both DR1 and DR2")
@@ -567,24 +615,31 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR2] Creating NetworkFenceClass to fence peer cluster")
-			nfcName := "nfc-prom-004-" + nsName
-			nfc = CreateNetworkFenceClass(ctx, cDR2, nfcName, env.Provisioner, secretName, secretNs)
+			By("[DR2] Initializing fault injection provider")
+			faultConfig := helpers.FaultInjectionConfig{
+				Client:    cDR2,
+				Namespace: nsName,
+				ProviderParams: map[string]string{
+					"cluster_context": "DR2", // Help identify which cluster this is
+				},
+			}
+			faultProvider, err = helpers.NewFaultInjectionProvider(faultConfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
 
 			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
+			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-004 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
 			}
 
-			nfName := "nf-prom-004-" + nsName
-			By("[DR2] Creating NetworkFence (Fenced) to block peer cluster access")
-			nf = CreateNetworkFence(ctx, cDR2, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-			By("[DR2] Waiting for NetworkFence to report Succeeded")
-			WaitForNetworkFenceResult(ctx, cDR2, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			By("[DR2] Fencing peer cluster to block access")
+			for _, cidr := range cidrs {
+				err = faultProvider.FenceIP(ctx, cidr, nil)
+				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
+			}
 
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=true; should succeed)")
-			err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
+			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Primary
 			err = cDR2.Update(ctx, vrDR2)
@@ -612,11 +667,22 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(),
 				"L1-PROM-004: VR must have Replicating or Completed condition after force promote")
 
-			By("[DR2] Unfencing by setting NetworkFence state to Unfenced")
-			UnfenceNetworkFence(ctx, cDR2, nf)
+			By("[DR2] Unfencing peer cluster to restore connectivity")
+			for _, cidr := range cidrs {
+				err = faultProvider.UnfenceIP(ctx, cidr, nil)
+				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
+			}
 
-			By("[DR2] Waiting for NetworkFence unfence operation to complete successfully")
-			WaitForNetworkFenceResult(ctx, cDR2, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			// Verify connectivity is restored
+			Eventually(func() bool {
+				for _, cidr := range cidrs {
+					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false)
+					if err != nil || !connected {
+						return false
+					}
+				}
+				return true
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Connectivity should be restored after unfencing")
 
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {

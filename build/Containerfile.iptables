@@ -1,0 +1,34 @@
+# Custom iptables image for CSI-Addons fault injection testing
+FROM alpine:3.19
+
+LABEL org.opencontainers.image.title="CSI-Addons Iptables Manager"
+LABEL org.opencontainers.image.description="Pre-built alpine image with iptables and network tools for fault injection testing"
+LABEL org.opencontainers.image.source="https://github.com/csi-addons/kubernetes-csi-addons"
+
+# Install iptables and network debugging tools
+RUN apk add --no-cache \
+    iptables \
+    inotify-tools \
+    curl \
+    wget \
+    netcat-openbsd \
+    bind-tools \
+    iputils \
+    tcpdump \
+    && rm -rf /var/cache/apk/*
+
+# Verify installations
+RUN iptables --version && \
+    which iptables && \
+    which ping && \
+    which nc && \
+    which nslookup
+
+# Create working directories
+RUN mkdir -p /rules /tmp /var/log
+
+# Set working directory
+WORKDIR /
+
+# Default command for debugging
+CMD ["sh", "-c", "echo 'CSI-Addons Iptables Manager Ready'; while true; do sleep 30; done"]

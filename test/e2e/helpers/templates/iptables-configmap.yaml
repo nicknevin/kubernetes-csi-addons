@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: csi-addons-iptables-manager-rules
+  namespace: {{ .Namespace }}
+  labels:
+    app: csi-addons-iptables-manager
+    csi-addons.io/component: fault-injection
+    csi-addons.io/fault-injector: iptables
+data:
+  apply.sh: |
+    #!/bin/sh
+    # Initial iptables rules script
+    # Rules will be updated dynamically by the fault injection provider
+    echo "Iptables rules manager initialized"

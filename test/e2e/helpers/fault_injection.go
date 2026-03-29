@@ -137,8 +137,8 @@ func NewFaultInjectionProvider(config FaultInjectionConfig) (PeerFenceProvider, 
 		case string(FaultInjectorNone):
 			providerType = FaultInjectorNone
 		case "":
-			// Default to NetworkFence for backward compatibility
-			providerType = FaultInjectorNetworkFence
+			// Default to iptables for better cluster compatibility
+			providerType = FaultInjectorIptables
 		default:
 			return nil, fmt.Errorf("unsupported fault injector type: %s (supported: networkfence, iptables, none)", envType)
 		}
@@ -169,7 +169,7 @@ func GetFaultInjectorTypeFromEnv() FaultInjectorType {
 	case string(FaultInjectorNone):
 		return FaultInjectorNone
 	default:
-		return FaultInjectorNetworkFence // Default for backward compatibility
+		return FaultInjectorIptables // Default to iptables for better compatibility
 	}
 }
 

@@ -426,7 +426,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			nfc = CreateNetworkFenceClass(ctx, cDR2, nfcName, env.Provisioner, secretName, secretNs)
 
 			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR2, env.Provisioner, nfcName)
+			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-003 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
 			}
@@ -505,30 +505,6 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 	Describe("L1-PROM-004: Promote secondary to primary with peer unreachable (force=true)", func() {
 		It("L1-PROM-004: fence peer cluster → force promote succeeds → unfence → verify stability", func() {
-			// SKIP REASON: L1-PROM-004 is skipped due to an issue with force promote in degraded RBD mirror mode.
-			// GitHub Issue: https://github.com/nadavleva/kubernetes-csi-addons/issues/7
-			//
-			// ISSUE DESCRIPTION:
-			// When the RBD mirror is degraded (peer cluster is unreachable/fenced), the force promote operation
-			// does not transition the VolumeReplication state to Primary or Unknown as expected. Instead, the VR
-			// remains in Secondary state with conditions=[Completed=True Degraded=True]. This appears to be a
-			// driver/storage backend limitation where the RBD mirror daemon cannot transition to Primary when
-			// the mirror is in a degraded state (peer is unreachable).
-			//
-			// EXPECTED BEHAVIOR:
-			// With force=true, the promote operation should succeed and transition VR state to Primary (or Unknown)
-			// even when the peer is unreachable/fenced.
-			//
-			// ACTUAL BEHAVIOR:
-			// VR state remains Secondary with Degraded condition despite successful force promote operation.
-			// The assertion times out after 2 minutes waiting for state transition.
-			//
-			// NEXT STEPS:
-			// 1. Investigate RBD mirror degradation handling in the CSI driver
-			// 2. Check if RBD mirror can be forced to Primary when degraded
-			// 3. May require driver-level changes or RBD configuration updates
-			// See GitHub issue for investigation details and updates.
-			Skip("L1-PROM-004: Skipped due to RBD mirror force promote issue in degraded mode - VR state does not transition to Primary when peer is fenced. Ref: https://github.com/nadavleva/kubernetes-csi-addons/issues/7")
 
 			By("Starting L1-PROM-004: Promote secondary to primary with peer unreachable (force=true)")
 			SkipIfNotFullDR("L1-PROM-004", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
@@ -596,7 +572,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			nfc = CreateNetworkFenceClass(ctx, cDR2, nfcName, env.Provisioner, secretName, secretNs)
 
 			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR2, env.Provisioner, nfcName)
+			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-004 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
 			}
@@ -608,8 +584,10 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			WaitForNetworkFenceResult(ctx, cDR2, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
 
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=true; should succeed)")
+			err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
+			Expect(err).NotTo(HaveOccurred())
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Primary
-			err := cDR2.Update(ctx, vrDR2)
+			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("[DR2] Waiting for VR to report success (Replicating or Completed with Promoted reason)")

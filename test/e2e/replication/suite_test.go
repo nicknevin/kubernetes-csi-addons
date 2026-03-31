@@ -188,6 +188,23 @@ var _ = BeforeSuite(func() {
 
 	Logf("[SETUP]", "ready")
 
+	// Deploy iptables manager DaemonSet for network fence tests
+	Logf("[SETUP]", "deploying iptables manager DaemonSet for network fence capability")
+	if fullDR {
+		// Deploy to both DR1 and DR2 clusters with ConfigMaps
+		if err := helpers.DeployIptablesServiceWithConfigMap(context.Background(), k8sClientDR1, "csi-addons-system"); err != nil {
+			Logf("[SETUP]", "WARNING: iptables service deployment to DR1 failed: %v (continuing with tests)", err)
+		}
+		if err := helpers.DeployIptablesServiceWithConfigMap(context.Background(), k8sClientDR2, "csi-addons-system"); err != nil {
+			Logf("[SETUP]", "WARNING: iptables service deployment to DR2 failed: %v (continuing with tests)", err)
+		}
+	} else {
+		// Deploy to primary cluster with ConfigMap
+		if err := helpers.DeployIptablesServiceWithConfigMap(context.Background(), k8sClient, "csi-addons-system"); err != nil {
+			Logf("[SETUP]", "WARNING: iptables service deployment failed: %v (continuing with tests)", err)
+		}
+	}
+
 	// Detect NetworkFence support once at suite level for efficiency
 	// This is done after client creation so we can query the cluster
 	Logf("[SETUP]", "detecting NetworkFence support")

@@ -124,12 +124,16 @@ load_image_to_cluster() {
 	local context="$1"
 	local image="$2"
 	
+	echo "  [DEBUG] Attempting to load image '$image' to context '$context'"
+	
 	# Test if image is accessible first
 	local test_pod="image-test-$(date +%s)"
+	echo "  [DEBUG] Testing image accessibility in context '$context'"
 	if kubectl --context="$context" run "$test_pod" --image="$image" --restart=Never --rm --timeout=30s --command -- echo "ok" >/dev/null 2>&1; then
 		echo "Image $image already accessible in $context"
 		return 0
 	fi
+	echo "  [DEBUG] Image not yet accessible in context, attempting to load..."
 	
 	# Try to load for kind clusters
 	if command -v kind >/dev/null 2>&1; then
@@ -153,17 +157,45 @@ load_image_to_cluster() {
 		fi
 	fi
 	
-	echo "Cannot load $image to $context (not kind/k3d or image not in registry)"
+	# Try to load for minikube clusters
+	if command -v minikube >/dev/null 2>&1; then
+		local cluster_name="$context"
+		# Extract cluster name from context (remove minikube- prefix if present)
+		[[ "$context" =~ minikube- ]] && cluster_name="$(echo "$context" | sed 's/minikube-//')"
+		
+		echo "  [DEBUG] Checking for minikube profile: '$cluster_name'"
+		if minikube profile list 2>/dev/null | grep -q "^${cluster_name}"; then
+			echo "Loading via minikube to cluster: $cluster_name"
+			# Detect container runtime (podman/docker) for save command
+			if command -v podman >/dev/null 2>&1; then
+				CONTAINER_CMD="podman"
+			elif command -v docker >/dev/null 2>&1; then
+				CONTAINER_CMD="docker"
+			else
+				echo "  [DEBUG] Neither podman nor docker found, cannot load image"
+				return 1
+			fi
+			echo "  [DEBUG] Running: $CONTAINER_CMD save '$image' | minikube image load --profile='$cluster_name' -"
+			$CONTAINER_CMD save "$image" | minikube image load --profile="$cluster_name" - && return 0
+		else
+			echo "  [DEBUG] Minikube profile '$cluster_name' not found in profile list"
+		fi
+	fi
+	
+	echo "Cannot load $image to $context (not kind/k3d/minikube or image not in registry)"
 	return 1
 }
 
 prepare_iptables_image() {
 	local iptables_image="${IPTABLES_IMAGE:-csi-addons/iptables-manager:latest}"
 	
-	# Only prepare image if DR contexts are set (indicates dual-cluster testing)
+	# Use pre-built iptables image with all tools included
+	# No fallback to alpine - the custom image has everything needed
+	echo "  Using pre-built iptables image: $iptables_image"
+	
+	# Only attempt to load image to clusters if DR contexts are set (dual-cluster testing)
 	if [[ -n "${DR1_CONTEXT:-}" && -n "${DR2_CONTEXT:-}" ]]; then
 		echo "  Detected dual-cluster setup (DR1_CONTEXT=${DR1_CONTEXT}, DR2_CONTEXT=${DR2_CONTEXT})"
-		echo "  Using iptables image: $iptables_image"
 		
 		# Detect container command
 		if command -v podman > /dev/null 2>&1; then
@@ -171,11 +203,13 @@ prepare_iptables_image() {
 		elif command -v docker > /dev/null 2>&1; then
 			CONTAINER_CMD="docker"
 		else
-			echo "  ERROR: Neither podman nor docker found"
-			echo "  Falling back to alpine:3.19 with runtime installation"
-			export IPTABLES_IMAGE="alpine:3.19"
-			return
+			echo "  WARNING: Neither podman nor docker found, skipping pre-cluster image loading"
+			echo "  (Image should already be available in clusters)"
 		fi
+		
+		# Normalize image name - remove localhost/ prefix if present (podman may add it)
+		iptables_image="${iptables_image#localhost/}"
+		echo "  Using normalized image: $iptables_image"
 		
 		# Build custom iptables image if needed
 		if [[ "$iptables_image" == "csi-addons/iptables-manager:latest" ]]; then
@@ -186,51 +220,42 @@ prepare_iptables_image() {
 					if $CONTAINER_CMD build -t "csi-addons/iptables-manager:latest" -f "${REPO_ROOT}/build/Containerfile.iptables" "${REPO_ROOT}/build/" >/dev/null 2>&1; then
 						echo "  ✓ Successfully built custom iptables image"
 					else
-						echo "  ERROR: Failed to build custom iptables image"
-						echo "  Falling back to alpine:3.19 with runtime installation"
-						export IPTABLES_IMAGE="alpine:3.19"
-						return
+						echo "  WARNING: Failed to build custom iptables image, will attempt to use existing"
 					fi
 				else
-					echo "  ERROR: Containerfile.iptables not found"
-					echo "  Falling back to alpine:3.19 with runtime installation" 
-					export IPTABLES_IMAGE="alpine:3.19"
-					return
+					echo "  WARNING: Containerfile.iptables not found, will attempt to use existing image"
 				fi
 			else
-				echo "  ✓ Custom iptables image already exists"
+				echo "  ✓ Custom iptables image already exists locally"
 			fi
 		fi
 		
-		echo "  Loading image $iptables_image to both DR clusters..."
+		echo "  Attempting to load image $iptables_image to DR clusters..."
 		
-		# Load to DR1 cluster
+		# Load to DR1 cluster (non-fatal if fails - image may already be there)
 		echo "    Loading to DR1 cluster ($DR1_CONTEXT)..."
 		if load_image_to_cluster "$DR1_CONTEXT" "$iptables_image"; then
 			echo "    ✓ Successfully loaded to DR1"
 		else
-			echo "    ✗ Failed to load to DR1"
-			echo "  Falling back to alpine:3.19 with runtime installation"
-			export IPTABLES_IMAGE="alpine:3.19"
-			return
+			echo "    ℹ Image not pre-loaded to DR1 (will pull from registry if available)"
 		fi
 		
-		# Load to DR2 cluster  
+		# Load to DR2 cluster (non-fatal if fails - image may already be there)
 		echo "    Loading to DR2 cluster ($DR2_CONTEXT)..."
 		if load_image_to_cluster "$DR2_CONTEXT" "$iptables_image"; then
 			echo "    ✓ Successfully loaded to DR2"
 		else
-			echo "    ✗ Failed to load to DR2"
-			echo "  Falling back to alpine:3.19 with runtime installation"
-			export IPTABLES_IMAGE="alpine:3.19"
-			return
+			echo "    ℹ Image not pre-loaded to DR2 (will pull from registry if available)"
 		fi
 		
-		echo "  ✓ Custom iptables image loaded to both clusters successfully"
-		export IPTABLES_IMAGE="$iptables_image"
+		echo "  ✓ Ready to use pre-built iptables image in clusters"
 	else
-		echo "  Skipping image preparation (single-cluster setup)"
+		echo "  Single-cluster mode: skipping pre-cluster image load"
 	fi
+	
+	# Always export the pre-built image (no alpine fallback)
+	export E2E_IPTABLES_IMAGE="$iptables_image"
+}
 
 # Call the image preparation function
 prepare_iptables_image

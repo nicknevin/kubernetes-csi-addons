@@ -28,6 +28,7 @@ spec:
       containers:
       - name: iptables-manager
         image: {{ .Image }}
+        imagePullPolicy: Never
         command:
         - sh
         - -c

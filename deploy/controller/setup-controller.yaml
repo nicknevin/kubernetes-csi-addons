@@ -60,6 +60,7 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         image: quay.io/csiaddons/k8s-controller:latest
+        imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
             path: /healthz

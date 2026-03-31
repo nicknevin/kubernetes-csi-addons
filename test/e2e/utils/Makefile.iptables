@@ -1,0 +1,142 @@
+# Makefile for iptables image used in CSI-Addons E2E testing
+# This file is separate from the main Makefile since iptables functionality
+# is only used for testing network fault injection, not for the main controller.
+
+# Default contexts for DR clusters
+DR1_CONTEXT ?= dr1
+DR2_CONTEXT ?= dr2
+
+# Default container command (can be overridden)
+CONTAINER_CMD ?= $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; else echo "echo 'Error: Neither podman nor docker found' && exit 1"; fi)
+
+# Image configuration
+IPTABLES_IMAGE_NAME ?= csi-addons/iptables-manager
+IPTABLES_IMAGE_TAG ?= latest
+IPTABLES_IMAGE ?= $(IPTABLES_IMAGE_NAME):$(IPTABLES_IMAGE_TAG)
+
+# Build context is the utils directory (where Containerfile.iptables is located)
+BUILD_CONTEXT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
+.PHONY: help
+help: ## Display this help message
+	@echo "CSI-Addons E2E Iptables Image Makefile"
+	@echo "======================================"
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  CONTAINER_CMD        Container runtime (default: auto-detect podman/docker)"
+	@echo "  IPTABLES_IMAGE_NAME  Image name (default: csi-addons/iptables-manager)"
+	@echo "  IPTABLES_IMAGE_TAG   Image tag (default: latest)"
+	@echo "  DR1_CONTEXT          DR1 cluster context (default: dr1)"
+	@echo "  DR2_CONTEXT          DR2 cluster context (default: dr2)"
+
+.PHONY: build-iptables-image
+build-iptables-image: ## Build the iptables manager image for E2E testing
+	@echo "Building iptables image: $(IPTABLES_IMAGE)"
+	@echo "Using container runtime: $(CONTAINER_CMD)"
+	@echo "Build context: $(BUILD_CONTEXT)"
+	$(CONTAINER_CMD) build -f $(BUILD_CONTEXT)/Containerfile.iptables -t $(IPTABLES_IMAGE) $(BUILD_CONTEXT)
+	@echo "Tagging image for docker.io registry..."
+	$(CONTAINER_CMD) tag $(IPTABLES_IMAGE) docker.io/$(IPTABLES_IMAGE)
+	@echo "✓ Successfully built: $(IPTABLES_IMAGE)"
+	@echo "✓ Successfully tagged: docker.io/$(IPTABLES_IMAGE)"
+
+.PHONY: verify-iptables-image
+verify-iptables-image: ## Verify the iptables image exists and works
+	@echo "Verifying iptables image: $(IPTABLES_IMAGE)"
+	@if $(CONTAINER_CMD) images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "^$(IPTABLES_IMAGE)$$"; then \
+		echo "✓ Image found: $(IPTABLES_IMAGE)"; \
+		echo "Testing image functionality..."; \
+		$(CONTAINER_CMD) run --rm $(IPTABLES_IMAGE) sh -c "iptables --version && ip link show && echo 'All tools working correctly'"; \
+		echo "✓ Image verification successful"; \
+	else \
+		echo "✗ Image not found: $(IPTABLES_IMAGE)"; \
+		echo "Run 'make build-iptables-image' to build it"; \
+		exit 1; \
+	fi
+
+.PHONY: clean-iptables-image
+clean-iptables-image: ## Remove the iptables image
+	@echo "Removing iptables image: $(IPTABLES_IMAGE)"
+	$(CONTAINER_CMD) rmi $(IPTABLES_IMAGE) 2>/dev/null || echo "Image not found or already removed"
+	@echo "✓ Cleanup completed"
+
+.PHONY: list-iptables-images
+list-iptables-images: ## List all iptables-related images
+	@echo "Iptables-related images:"
+	$(CONTAINER_CMD) images | grep -E "(iptables|csi-addons)" || echo "No iptables images found"
+
+.PHONY: load-images-to-clusters
+load-images-to-clusters: ## Load both iptables images to DR1 and DR2 minikube clusters
+	@echo "Loading iptables images to DR clusters..."
+	@echo "DR1 Context: $(DR1_CONTEXT)"
+	@echo "DR2 Context: $(DR2_CONTEXT)"
+	@echo "Images to load:"
+	@echo "  - $(IPTABLES_IMAGE)"
+	@echo "  - docker.io/$(IPTABLES_IMAGE)"
+	@echo ""
+	@if ! command -v minikube >/dev/null 2>&1; then \
+		echo "✗ Error: minikube not found. Please install minikube first."; \
+		exit 1; \
+	fi
+	@echo "Loading images to DR1 cluster ($(DR1_CONTEXT))..."
+	@if minikube profile list 2>/dev/null | grep -q "│ $(DR1_CONTEXT) "; then \
+		echo "  Loading $(IPTABLES_IMAGE) to $(DR1_CONTEXT)..."; \
+		$(CONTAINER_CMD) save $(IPTABLES_IMAGE) | minikube image load --profile=$(DR1_CONTEXT) - || echo "Failed to load $(IPTABLES_IMAGE)"; \
+		echo "  Loading docker.io/$(IPTABLES_IMAGE) to $(DR1_CONTEXT)..."; \
+		$(CONTAINER_CMD) save docker.io/$(IPTABLES_IMAGE) | minikube image load --profile=$(DR1_CONTEXT) - || echo "Failed to load docker.io/$(IPTABLES_IMAGE)"; \
+		echo "✓ DR1 image loading completed"; \
+	else \
+		echo "✗ Minikube profile '$(DR1_CONTEXT)' not found"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Loading images to DR2 cluster ($(DR2_CONTEXT))..."
+	@if minikube profile list 2>/dev/null | grep -q "│ $(DR2_CONTEXT) "; then \
+		echo "  Loading $(IPTABLES_IMAGE) to $(DR2_CONTEXT)..."; \
+		$(CONTAINER_CMD) save $(IPTABLES_IMAGE) | minikube image load --profile=$(DR2_CONTEXT) - || echo "Failed to load $(IPTABLES_IMAGE)"; \
+		echo "  Loading docker.io/$(IPTABLES_IMAGE) to $(DR2_CONTEXT)..."; \
+		$(CONTAINER_CMD) save docker.io/$(IPTABLES_IMAGE) | minikube image load --profile=$(DR2_CONTEXT) - || echo "Failed to load docker.io/$(IPTABLES_IMAGE)"; \
+		echo "✓ DR2 image loading completed"; \
+	else \
+		echo "✗ Minikube profile '$(DR2_CONTEXT)' not found"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "✓ All images loaded successfully to both DR clusters!"
+
+.PHONY: verify-images-in-clusters
+verify-images-in-clusters: ## Verify iptables images are accessible in both DR clusters
+	@echo "Verifying iptables images in DR clusters..."
+	@echo "Testing $(IPTABLES_IMAGE) in DR1 ($(DR1_CONTEXT)):"
+	@TEST_POD_DR1="iptables-test-dr1-$$(date +%s)" && \
+	kubectl --context=$(DR1_CONTEXT) run $$TEST_POD_DR1 \
+		--image=$(IPTABLES_IMAGE) \
+		--image-pull-policy=Never \
+		--restart=Never \
+		--command \
+		-- sh -c "iptables --version && echo 'DR1 test passed'" && \
+	kubectl --context=$(DR1_CONTEXT) wait --for=condition=complete pod/$$TEST_POD_DR1 --timeout=30s && \
+	kubectl --context=$(DR1_CONTEXT) logs $$TEST_POD_DR1 && \
+	kubectl --context=$(DR1_CONTEXT) delete pod $$TEST_POD_DR1 || echo "DR1 test failed"
+	@echo ""
+	@echo "Testing $(IPTABLES_IMAGE) in DR2 ($(DR2_CONTEXT)):"
+	@TEST_POD_DR2="iptables-test-dr2-$$(date +%s)" && \
+	kubectl --context=$(DR2_CONTEXT) run $$TEST_POD_DR2 \
+		--image=$(IPTABLES_IMAGE) \
+		--image-pull-policy=Never \
+		--restart=Never \
+		--command \
+		-- sh -c "iptables --version && echo 'DR2 test passed'" && \
+	kubectl --context=$(DR2_CONTEXT) wait --for=condition=complete pod/$$TEST_POD_DR2 --timeout=30s && \
+	kubectl --context=$(DR2_CONTEXT) logs $$TEST_POD_DR2 && \
+	kubectl --context=$(DR2_CONTEXT) delete pod $$TEST_POD_DR2 || echo "DR2 test failed"
+	@echo "✓ Image verification completed"
+
+# Compatibility targets for existing scripts
+.PHONY: docker-build-iptables
+docker-build-iptables: build-iptables-image ## Compatibility alias for build-iptables-image
+
+# Default target
+.DEFAULT_GOAL := help

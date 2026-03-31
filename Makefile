@@ -213,8 +213,10 @@ docker-generate-protobuf: container-cmd ./build/Containerfile.tools
 	$(CONTAINER_CMD) run --rm -ti --volume=${PWD}:/go/src/github.com/csi-addons/kubernetes-csi-addons:Z ${TOOLS_IMG} make generate-protobuf
 
 .PHONY: docker-build-iptables
-docker-build-iptables: container-cmd ./build/Containerfile.iptables ## Build custom iptables image for E2E testing
-	$(CONTAINER_CMD) build -f ./build/Containerfile.iptables -t csi-addons/iptables-manager:latest ./build/
+docker-build-iptables: ## Build custom iptables image for E2E testing (moved to test/e2e/utils/)
+	@echo "INFO: iptables image building has moved to test/e2e/utils/"
+	@echo "Use: make -f test/e2e/utils/Makefile.iptables build-iptables-image"
+	$(MAKE) -f test/e2e/utils/Makefile.iptables build-iptables-image
 
 ##@ Deployment
 

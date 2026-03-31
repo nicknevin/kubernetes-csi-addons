@@ -448,7 +448,12 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Initializing fault injection provider")
 			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
-				Client: cDR2,
+				Type:      helpers.FaultInjectorIptables,
+				Client:    cDR2,
+				Namespace: nsName,
+				ProviderParams: map[string]string{
+					"image": helpers.DefaultIptablesImageWithRegistry,
+				},
 			})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
 
@@ -617,10 +622,12 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Initializing fault injection provider")
 			faultConfig := helpers.FaultInjectionConfig{
+				Type:      helpers.FaultInjectorIptables,
 				Client:    cDR2,
 				Namespace: nsName,
 				ProviderParams: map[string]string{
 					"cluster_context": "DR2", // Help identify which cluster this is
+					"image":           helpers.DefaultIptablesImageWithRegistry,
 				},
 			}
 			faultProvider, err = helpers.NewFaultInjectionProvider(faultConfig)

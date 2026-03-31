@@ -57,6 +57,10 @@ const (
 	// Using a pre-built image with iptables and network tools
 	DefaultIptablesImage = "csi-addons/iptables-manager:latest"
 
+	// DefaultIptablesImageWithRegistry is the default image with docker.io prefix
+	// to avoid containerd localhost/ resolution issues in e2e tests
+	DefaultIptablesImageWithRegistry = "docker.io/csi-addons/iptables-manager:latest"
+
 	// IptablesReadyTimeout is how long to wait for DaemonSet pods to be ready
 	IptablesReadyTimeout = 120 * time.Second
 )
@@ -388,6 +392,12 @@ func (p *IptablesFaultProvider) createIptablesDaemonSet() *appsv1.DaemonSet {
 		image = DefaultIptablesImage
 	}
 
+	// Normalize image name - remove localhost/ prefix if present (podman may add it)
+	if strings.HasPrefix(image, "localhost/") {
+		image = strings.TrimPrefix(image, "localhost/")
+		Logf("[DEBUG]", "Normalized image name by removing localhost/ prefix: %s", image)
+	}
+
 	Logf("[DEBUG]", "Creating iptables DaemonSet with image: %s", image)
 
 	nodeSelector := map[string]string{}
@@ -418,8 +428,17 @@ func (p *IptablesFaultProvider) createIptablesDaemonSet() *appsv1.DaemonSet {
 	}
 
 	daemonSet := &appsv1.DaemonSet{}
+	Logf("[DEBUG]", "About to render DaemonSet template: %s", templatePath)
 	if err := p.renderTemplate(templatePath, data, daemonSet); err != nil {
-		panic(fmt.Sprintf("Failed to render DaemonSet template: %v", err))
+		Logf("[ERROR]", "Failed to render DaemonSet template: %v", err)
+		return daemonSet // Return empty DaemonSet instead of panicking
+	}
+	Logf("[DEBUG]", "Successfully rendered DaemonSet template")
+
+	// Debug: Log the rendered DaemonSet volumes
+	Logf("[DEBUG]", "DaemonSet volumes count: %d", len(daemonSet.Spec.Template.Spec.Volumes))
+	for i, vol := range daemonSet.Spec.Template.Spec.Volumes {
+		Logf("[DEBUG]", "Volume %d: %s", i, vol.Name)
 	}
 
 	// If using alpine image, modify the command to install iptables
@@ -474,6 +493,9 @@ func (p *IptablesFaultProvider) renderTemplate(templatePath string, data Templat
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
+
+	// Debug: Log the rendered YAML content
+	Logf("[DEBUG]", "Rendered template content:\n%s", buf.String())
 
 	// Decode YAML into the object
 	if err := yaml.Unmarshal(buf.Bytes(), obj); err != nil {

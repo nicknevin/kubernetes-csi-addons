@@ -31,5 +31,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: quay.io/csiaddons/k8s-controller
-  newTag: latest
+  newName: quay.io/nnevin/k8s-controller
+  newTag: idmap

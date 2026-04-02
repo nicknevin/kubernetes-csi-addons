@@ -1,9 +1,10 @@
+REGISTRY = quay.io/nnevin/csi-addons
 
 # Image URL to use all building/pushing image targets
-CONTROLLER_IMG ?= quay.io/csiaddons/k8s-controller
-SIDECAR_IMG ?= quay.io/csiaddons/k8s-sidecar
-BUNDLE_IMG ?= quay.io/csiaddons/k8s-bundle
-TOOLS_IMG ?= quay.io/csiaddons/tools
+CONTROLLER_IMG ?= $(REGISTRY)/k8s-controller
+SIDECAR_IMG ?= $(REGISTRY)/k8s-sidecar
+BUNDLE_IMG ?= $(REGISTRY)/k8s-bundle
+TOOLS_IMG ?= $(REGISTRY)/tools
 
 # set TAG to a release for consumption in the bundle
 TAG ?= latest

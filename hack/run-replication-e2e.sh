@@ -12,8 +12,8 @@
 #   GINKGO_FOCUS        - Ginkgo focus expression to run only matching tests (default: run all).
 #                          Examples: "L1-E-001", "EnableVolumeReplication", "GetVolumeReplicationInfo"
 #   INSTALL_CRDS         - "true" to install CRDs before tests if missing (default: "false")
-#   STORAGE_CLASS        - StorageClass name for PVCs (default: auto-detect or "rook-ceph-block")
-#   CSI_PROVISIONER      - Must match CSIAddonsNode .spec.driver.name (default: "rook-ceph.rbd.csi.ceph.com").
+#   STORAGE_CLASS        - StorageClass name for PVCs (default: "rook-ceph-block"; not auto-detected).
+#   CSI_PROVISIONER      - Must match CSIAddonsNode .spec.driver.name (default: "rook-ceph.rbd.csi.ceph.com"; not auto-detected).
 #                          If state stays Unknown, run ./hack/diagnose-replication-vr.sh and set this.
 #   REPLICATION_SECRET_NAME, REPLICATION_SECRET_NAMESPACE - If both set, use this existing secret
 #                          for VolumeReplicationClass (e.g. rook-csi-rbd-provisioner in rook-ceph).
@@ -92,8 +92,8 @@ echo "  REPLICATION_TEST_TIMEOUT=${REPLICATION_TEST_TIMEOUT:-30m} (go test -time
 echo "  REPLICATION_POLL_TIMEOUT=${REPLICATION_POLL_TIMEOUT:-<default 300>}"
 echo "  REPLICATION_SECRET_NAME=${REPLICATION_SECRET_NAME:-<unset, create per-ns secret>}"
 echo "  REPLICATION_SECRET_NAMESPACE=${REPLICATION_SECRET_NAMESPACE:-<unset>}"
-echo "  STORAGE_CLASS=${STORAGE_CLASS:-<auto>}"
-echo "  CSI_PROVISIONER=${CSI_PROVISIONER:-<auto>}"
+echo "  STORAGE_CLASS=${STORAGE_CLASS:-rook-ceph-block}"
+echo "  CSI_PROVISIONER=${CSI_PROVISIONER:-rook-ceph.rbd.csi.ceph.com}"
 echo "  DR1_CONTEXT=${DR1_CONTEXT:-<unset>}"
 echo "  DR2_CONTEXT=${DR2_CONTEXT:-<unset>}"
 echo "  GINKGO_FOCUS=${GINKGO_FOCUS:-<all>}"

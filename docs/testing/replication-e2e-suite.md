@@ -85,8 +85,8 @@ make test-replication-e2e GINKGO_FOCUS="L1-E-001"
 |--------------------------------|-----------------------------------------------------------------------------|----------------|
 | `GINKGO_FOCUS`                 | Ginkgo focus expression to run only matching specs                         | (run all)      |
 | `INSTALL_CRDS`                 | Set to `true` to install CRDs from `deploy/controller/crds.yaml` if missing | `false`        |
-| `STORAGE_CLASS`                | StorageClass name used for test PVCs                                       | auto-detect    |
-| `CSI_PROVISIONER`              | Provisioner name for VolumeReplicationClass                                | auto-detect    |
+| `STORAGE_CLASS`                | StorageClass name used for test PVCs. Not auto-detected from the cluster; defaults match typical Rook-Ceph block storage. | `rook-ceph-block` |
+| `CSI_PROVISIONER`              | VolumeReplicationClass provisioner; must match CSIAddonsNode `spec.driver.name`. Not auto-detected; default matches Rook-Ceph RBD. | `rook-ceph.rbd.csi.ceph.com` |
 | `REPLICATION_SECRET_NAME`      | Name of existing secret for replication (use with `REPLICATION_SECRET_NAMESPACE`) | (create per-namespace secret) |
 | `REPLICATION_SECRET_NAMESPACE` | Namespace of existing replication secret                                   | (create per-namespace secret) |
 | `REPLICATION_POLL_TIMEOUT`     | Timeout in seconds for waiting on Replicating=True (and error conditions)  | `300` |

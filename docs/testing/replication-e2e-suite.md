@@ -84,6 +84,7 @@ make test-replication-e2e GINKGO_FOCUS="L1-E-001"
 | Variable                       | Description                                                                 | Default        |
 |--------------------------------|-----------------------------------------------------------------------------|----------------|
 | `GINKGO_FOCUS`                 | Ginkgo focus expression to run only matching specs                         | (run all)      |
+| `E2E_FAULT_INJECTOR`           | Fault injection mechanism for network fencing tests (L1-E-003): `networkfence` (CSI-Addons NetworkFence CRDs), `iptables` (iptables-based blocking), or `none` (no fault injection) | `iptables`     |
 | `INSTALL_CRDS`                 | Set to `true` to install CRDs from `deploy/controller/crds.yaml` if missing | `false`        |
 | `STORAGE_CLASS`                | StorageClass name used for test PVCs. Not auto-detected from the cluster; defaults match typical Rook-Ceph block storage. | `rook-ceph-block` |
 | `CSI_PROVISIONER`              | VolumeReplicationClass provisioner; must match CSIAddonsNode `spec.driver.name`. Not auto-detected; default matches Rook-Ceph RBD. | `rook-ceph.rbd.csi.ceph.com` |
@@ -95,6 +96,25 @@ make test-replication-e2e GINKGO_FOCUS="L1-E-001"
 | `DR2_CONTEXT`                  | Kubeconfig context name for secondary cluster (DR2). Set with `DR1_CONTEXT` for full-DR mode. | (unset) |
 | `FENCE_CIDRS`                  | Comma-separated CIDRs for L1-E-003 (peer unreachable) NetworkFence test. If unset, CIDRs are read from CSIAddonsNode `status.networkFenceClientStatus`, or fallback to node InternalIPs. | (CSIAddonsNode or node IPs) |
 | `FENCE_CLUSTER_ID`             | ClusterID for Ceph CSI NetworkFenceClass (required for Ceph/Rook). If unset, inferred from `REPLICATION_SECRET_NAMESPACE` when provisioner contains "ceph". | (inferred from secret namespace) |
+
+**Fault injection method (E2E_FAULT_INJECTOR):** L1-E-003 tests peer unreachability by blocking network connectivity. The test suite supports three fault injection backends:
+
+- **`iptables`** (default) — Uses iptables-based network blocking via a privileged DaemonSet. This is the simplest approach and works on most Kubernetes clusters without additional components. Deploys `csi-addons-iptables-manager` DaemonSet to block traffic.
+- **`networkfence`** — Uses NetworkFence CRDs from CSI-Addons (existing implementation). This is the preferred method for CSI-Addons integrated environments and directly tests the NetworkFence CSI addon. Requires NetworkFence CRDs and CSI driver support.
+- **`none`** — Disables fault injection entirely. Tests that require network fencing (like L1-E-003) will be skipped.
+
+Examples:
+
+```bash
+# Run with iptables fault injection (default)
+make test-replication-e2e GINKGO_FOCUS="L1-E-003"
+
+# Run with NetworkFence CSI fault injection (recommended for CSI-Addons testing)
+E2E_FAULT_INJECTOR=networkfence make test-replication-e2e GINKGO_FOCUS="L1-E-003"
+
+# Disable fault injection entirely (skip L1-E-003)
+E2E_FAULT_INJECTOR=none make test-replication-e2e
+```
 
 **L1-E-003 NetworkFence (Ceph CSI):** The Ceph CSI driver requires `clusterID` in NetworkFenceClass parameters for network fencing. For Rook, use the cluster namespace (e.g. `rook-ceph`). The e2e suite adds this automatically when the provisioner contains "ceph":
 

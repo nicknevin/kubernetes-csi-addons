@@ -475,6 +475,8 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Network should be fenced successfully")
 
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=false; should fail)")
+			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
+			Expect(err).NotTo(HaveOccurred())
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Primary
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())

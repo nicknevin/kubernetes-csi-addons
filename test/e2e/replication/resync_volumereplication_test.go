@@ -162,7 +162,6 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("L1-RSYNC-001: Removing NetworkFence to resolve split-brain")
 			DeleteNetworkFenceWithCleanup(ctx, cDR2, nf)
-
 			By("L1-RSYNC-001: Triggering resync by updating VR to Resync state")
 			err := cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 			Expect(err).NotTo(HaveOccurred())

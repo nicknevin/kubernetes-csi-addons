@@ -1448,6 +1448,35 @@ func logVRState(vr *replicationv1alpha1.VolumeReplication, stageName string) {
 		vr.Namespace, vr.Name, vr.Status.State, conditionsStr, message)
 }
 
+// logVRState logs comprehensive state information about a VolumeReplication resource in CRD format
+func logVRState(vr *replicationv1alpha1.VolumeReplication, stageName string) {
+	if vr == nil {
+		return
+	}
+
+	// Format conditions as Condition=Status pairs
+	conditionsStr := "NO CONDITIONS"
+	if len(vr.Status.Conditions) > 0 {
+		var condDetails []string
+		for _, cond := range vr.Status.Conditions {
+			condStr := fmt.Sprintf("%s=%s", cond.Type, cond.Status)
+			condDetails = append(condDetails, condStr)
+		}
+		conditionsStr = strings.Join(condDetails, " ")
+	}
+
+	// Format message
+	message := vr.Status.Message
+	if message == "" {
+		message = "-"
+	}
+
+	// Log data line in CRD table format:
+	// NAMESPACE              NAME              STATE        CONDITIONS                               MESSAGE
+	Logf("[INFO]", "%-30s %-30s %-15s %-40s %s",
+		vr.Namespace, vr.Name, vr.Status.State, conditionsStr, message)
+}
+
 // DeleteNetworkFenceWithCleanup unfences the CIDRs (sets fenceState: Unfenced), then deletes the
 // NetworkFence. Deletion no longer triggers UnfenceClusterNetwork; unfence must be explicit.
 // If vrs is provided (non-nil), waits for each VR's Degraded condition to become False before deletion.

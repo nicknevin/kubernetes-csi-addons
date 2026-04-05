@@ -192,10 +192,23 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 			echo "  [dry-run] would unfence NetworkFence $name"
 			return 0
 		fi
-		kubectl_ctx "$CURRENT_CTX" patch networkfence "$name" -p '{"spec":{"fenceState":"Unfenced"}}' --type=merge 2>/dev/null || true
+		kubectl_ctx "$CURRENT_CTX" patch networkfence "$name" -p '{"spec":{"fenceState":"Unfenced"}}' --type=merge 2>/dev/null || return 1
+		return 0
+	}
+
+	# Check if NetworkFence has invalid CIDR data
+	has_invalid_cidr() {
+		local name="$1"
+		local cidrs=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.spec.cidrs[0]}' 2>/dev/null || echo "")
+		# Check for common invalid CIDR patterns
+		if [[ "$cidrs" == "not-a-valid-cidr" ]] || [[ "$cidrs" == "" ]] || [[ "$cidrs" == "null" ]]; then
+			return 0  # Has invalid CIDR
+		fi
+		return 1  # CIDR appears valid
 	}
 
 	# Wait for NetworkFence to report Succeeded result (after unfencing)
+	# Returns 0 if succeeded, 1 if failed or timed out
 	wait_for_networkfence_unfence_success() {
 		local name="$1"
 		local timeout=30
@@ -204,10 +217,14 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 			local result=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.status.result}' 2>/dev/null || echo "")
 			if [[ "$result" == "Succeeded" ]]; then
 				return 0
+			elif [[ "$result" == "Failed" ]]; then
+				echo "  NetworkFence $name unfencing resulted in Failed state (possibly invalid CIDR)"
+				return 1
 			fi
 			sleep 2
 			waited=$((waited + 2))
 		done
+		echo "  NetworkFence $name unfencing timed out after ${timeout}s"
 		return 1
 	}
 
@@ -215,25 +232,45 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 		echo ""
 		echo "Cleaning test NetworkFences..."
 		for nf in $(kubectl_ctx "$CURRENT_CTX" get networkfence -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-			# Match test patterns: nf-fence-*, nf-e2e-replication-*, nf-prom-*-e2e-replication-*, nf-dem-*-e2e-replication-*
-			if [[ "$nf" == nf-fence-* ]] || [[ "$nf" == nf-e2e-replication-* ]] || [[ "$nf" == nf-prom-*-e2e-replication-* ]] || [[ "$nf" == nf-dem-*-e2e-replication-* ]]; then
+			# Match test patterns: nf-fence-*, nf-fault-*, nf-e2e-replication-*, nf-prom-*-e2e-replication-*, nf-dem-*-e2e-replication-*
+			if [[ "$nf" == nf-fence-* ]] || [[ "$nf" == nf-fault-* ]] || [[ "$nf" == nf-e2e-replication-* ]] || [[ "$nf" == nf-prom-*-e2e-replication-* ]] || [[ "$nf" == nf-dem-*-e2e-replication-* ]]; then
 				if [[ "$DRY_RUN" == "true" ]]; then
 					echo "  [dry-run] would unfence and delete NetworkFence $nf"
 				else
-					# Unfence first (set fenceState to Unfenced) before deletion
-					echo "  Unfencing NetworkFence $nf..."
-					unfence_networkfence "$nf"
-					if ! wait_for_networkfence_unfence_success "$nf"; then
-						echo "  Warning: unfence did not complete successfully for $nf, proceeding with deletion"
+					echo "  Processing NetworkFence $nf..."
+					
+					# Get CIDR info for diagnostics
+					cidrs=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$nf" -o jsonpath='{.spec.cidrs}' 2>/dev/null || echo "[]")
+					echo "  CIDRs: $cidrs"
+					
+					# Check for invalid CIDR and skip unfencing if found
+					if has_invalid_cidr "$nf"; then
+						echo "  NetworkFence $nf has invalid CIDR, removing finalizer and forcing deletion..."
+						remove_networkfence_finalizer "$nf"
+					else
+						# Unfence normal NetworkFences (set fenceState to Unfenced) before deletion
+						echo "  Unfencing NetworkFence $nf..."
+						if unfence_networkfence "$nf"; then
+							if ! wait_for_networkfence_unfence_success "$nf"; then
+								echo "  Unfence operation did not complete successfully, will remove finalizer and force delete"
+								remove_networkfence_finalizer "$nf"
+							fi
+						else
+							echo "  Failed to unfence NetworkFence $nf, will remove finalizer and force delete"
+							remove_networkfence_finalizer "$nf"
+						fi
 					fi
 					
-					# Delete the NetworkFence
-					kubectl_ctx "$CURRENT_CTX" delete networkfence "$nf" --ignore-not-found --timeout=30s 2>/dev/null || true
-					# Remove finalizer if still present (e.g. stuck in Terminating)
+					# Delete the NetworkFence (with grace period 0 for faster removal)
+					kubectl_ctx "$CURRENT_CTX" delete networkfence "$nf" --ignore-not-found --grace-period=0 --force 2>/dev/null || true
+					
+					# Wait a moment and check if still present
+					sleep 1
 					if kubectl_ctx "$CURRENT_CTX" get networkfence "$nf" &>/dev/null; then
-						echo "  NetworkFence $nf stuck, removing finalizer..."
-						remove_networkfence_finalizer "$nf"
-						kubectl_ctx "$CURRENT_CTX" delete networkfence "$nf" --ignore-not-found --timeout=15s 2>/dev/null || true
+						echo "  NetworkFence $nf still present, force removing finalizers..."
+						kubectl_ctx "$CURRENT_CTX" patch networkfence "$nf" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+						sleep 1
+						kubectl_ctx "$CURRENT_CTX" delete networkfence "$nf" --ignore-not-found --grace-period=0 --force 2>/dev/null || true
 					fi
 					echo "  Deleted NetworkFence $nf"
 				fi
@@ -243,19 +280,21 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 	if kubectl_ctx "$CURRENT_CTX" get crd networkfenceclasses.csiaddons.openshift.io &>/dev/null; then
 		echo "Cleaning test NetworkFenceClasses..."
 		for nfc in $(kubectl_ctx "$CURRENT_CTX" get networkfenceclass -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-			# Match test patterns: nfc-fence-*, nfc-e2e-replication-*, nfc-prom-*-e2e-replication-*, nfc-dem-*-e2e-replication-*
-			if [[ "$nfc" == nfc-fence-* ]] || [[ "$nfc" == nfc-e2e-replication-* ]] || [[ "$nfc" == nfc-prom-*-e2e-replication-* ]] || [[ "$nfc" == nfc-dem-*-e2e-replication-* ]]; then
+			# Match test patterns: nfc-fence-*, nfc-fault-*, nfc-e2e-replication-*, nfc-prom-*-e2e-replication-*, nfc-dem-*-e2e-replication-*
+			if [[ "$nfc" == nfc-fence-* ]] || [[ "$nfc" == nfc-fault-* ]] || [[ "$nfc" == nfc-e2e-replication-* ]] || [[ "$nfc" == nfc-prom-*-e2e-replication-* ]] || [[ "$nfc" == nfc-dem-*-e2e-replication-* ]]; then
 				if [[ "$DRY_RUN" == "true" ]]; then
 					echo "  [dry-run] would delete NetworkFenceClass $nfc"
 				else
 					echo "  Deleting NetworkFenceClass $nfc..."
-					# Delete the NetworkFenceClass
-					kubectl_ctx "$CURRENT_CTX" delete networkfenceclass "$nfc" --ignore-not-found --timeout=30s 2>/dev/null || true
-					# Remove finalizer if still present (e.g. stuck in Terminating)
-					if kubectl_ctx "$CURRENT_CTX" get networkfenceclass "$nfc" &>/dev/null; then
-						echo "  NetworkFenceClass $nfc stuck, removing finalizer..."
-						remove_networkfenceclass_finalizer "$nfc"
-						kubectl_ctx "$CURRENT_CTX" delete networkfenceclass "$nfc" --ignore-not-found --timeout=15s 2>/dev/null || true
+				# Delete the NetworkFenceClass (with grace period 0 for faster removal)
+				kubectl_ctx "$CURRENT_CTX" delete networkfenceclass "$nfc" --ignore-not-found --grace-period=0 --force 2>/dev/null || true
+				# Check if still present
+				sleep 1
+				if kubectl_ctx "$CURRENT_CTX" get networkfenceclass "$nfc" &>/dev/null; then
+					echo "  NetworkFenceClass $nfc stuck, removing finalizer..."
+					remove_networkfenceclass_finalizer "$nfc"
+					sleep 1
+					kubectl_ctx "$CURRENT_CTX" delete networkfenceclass "$nfc" --ignore-not-found --grace-period=0 --force 2>/dev/null || true
 					fi
 					echo "  Deleted NetworkFenceClass $nfc"
 				fi

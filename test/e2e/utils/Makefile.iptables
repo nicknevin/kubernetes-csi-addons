@@ -6,6 +6,10 @@
 DR1_CONTEXT ?= dr1
 DR2_CONTEXT ?= dr2
 
+# Default kubectl context for emergency-cleanup (must be set so the shell gets two args:
+# without it, `$(CONTEXT)` expands empty and only "e2e-*" is passed, which is misread as context)
+CONTEXT ?= dr2
+
 # Default container command (can be overridden)
 CONTAINER_CMD ?= $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; else echo "echo 'Error: Neither podman nor docker found' && exit 1"; fi)
 
@@ -30,22 +34,26 @@ help: ## Display this help message
 	@echo "  IPTABLES_IMAGE_TAG   Image tag (default: latest)"
 	@echo "  DR1_CONTEXT          DR1 cluster context (default: dr1)"
 	@echo "  DR2_CONTEXT          DR2 cluster context (default: dr2)"
+	@echo "  CONTEXT              kubectl context for emergency-cleanup (default: dr2)"
 
 .PHONY: build-iptables-image
 build-iptables-image: ## Build the iptables manager image for E2E testing
 	@echo "Building iptables image: $(IPTABLES_IMAGE)"
 	@echo "Using container runtime: $(CONTAINER_CMD)"
 	@echo "Build context: $(BUILD_CONTEXT)"
-	$(CONTAINER_CMD) build -f $(BUILD_CONTEXT)/Containerfile.iptables -t $(IPTABLES_IMAGE) $(BUILD_CONTEXT)
+	$(CONTAINER_CMD) build -f $(BUILD_CONTEXT)Containerfile.iptables -t $(IPTABLES_IMAGE) $(BUILD_CONTEXT)
 	@echo "Tagging image for docker.io registry..."
 	$(CONTAINER_CMD) tag $(IPTABLES_IMAGE) docker.io/$(IPTABLES_IMAGE)
 	@echo "✓ Successfully built: $(IPTABLES_IMAGE)"
 	@echo "✓ Successfully tagged: docker.io/$(IPTABLES_IMAGE)"
 
+# Presence check: do not grep `images` output — Podman lists names as
+# localhost/... or docker.io/... while Docker often omits the prefix, so a
+# literal match on $(IPTABLES_IMAGE) fails even when the image exists.
 .PHONY: verify-iptables-image
 verify-iptables-image: ## Verify the iptables image exists and works
 	@echo "Verifying iptables image: $(IPTABLES_IMAGE)"
-	@if $(CONTAINER_CMD) images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "^$(IPTABLES_IMAGE)$$"; then \
+	@if $(CONTAINER_CMD) inspect $(IPTABLES_IMAGE) >/dev/null 2>&1; then \
 		echo "✓ Image found: $(IPTABLES_IMAGE)"; \
 		echo "Testing image functionality..."; \
 		$(CONTAINER_CMD) run --rm $(IPTABLES_IMAGE) sh -c "iptables --version && ip link show && echo 'All tools working correctly'"; \
@@ -56,16 +64,20 @@ verify-iptables-image: ## Verify the iptables image exists and works
 		exit 1; \
 	fi
 
+# build-iptables-image tags both the short name and docker.io/...; Podman also records
+# localhost/... — remove every reference or the image layer remains under another name.
 .PHONY: clean-iptables-image
-clean-iptables-image: ## Remove the iptables image
-	@echo "Removing iptables image: $(IPTABLES_IMAGE)"
-	$(CONTAINER_CMD) rmi $(IPTABLES_IMAGE) 2>/dev/null || echo "Image not found or already removed"
+clean-iptables-image: ## Remove the iptables image (all local tags)
+	@echo "Removing iptables image tags for: $(IPTABLES_IMAGE)"
+	@for ref in $(IPTABLES_IMAGE) docker.io/$(IPTABLES_IMAGE) localhost/$(IPTABLES_IMAGE); do \
+		$(CONTAINER_CMD) rmi $$ref 2>/dev/null || true; \
+	done
 	@echo "✓ Cleanup completed"
 
 .PHONY: list-iptables-images
 list-iptables-images: ## List all iptables-related images
 	@echo "Iptables-related images:"
-	$(CONTAINER_CMD) images | grep -E "(iptables|csi-addons)" || echo "No iptables images found"
+	@$(CONTAINER_CMD) images | grep -E "(iptables|csi-addons)" || echo "No iptables images found"
 
 .PHONY: load-images-to-clusters
 load-images-to-clusters: ## Load both iptables images to DR1 and DR2 minikube clusters
@@ -106,6 +118,7 @@ load-images-to-clusters: ## Load both iptables images to DR1 and DR2 minikube cl
 	@echo ""
 	@echo "✓ All images loaded successfully to both DR clusters!"
 
+# Pods from kubectl run finish with status.phase=Succeeded; --for=condition=complete is for Jobs only.
 .PHONY: verify-images-in-clusters
 verify-images-in-clusters: ## Verify iptables images are accessible in both DR clusters
 	@echo "Verifying iptables images in DR clusters..."
@@ -117,7 +130,7 @@ verify-images-in-clusters: ## Verify iptables images are accessible in both DR c
 		--restart=Never \
 		--command \
 		-- sh -c "iptables --version && echo 'DR1 test passed'" && \
-	kubectl --context=$(DR1_CONTEXT) wait --for=condition=complete pod/$$TEST_POD_DR1 --timeout=30s && \
+	kubectl --context=$(DR1_CONTEXT) wait --for=jsonpath='{.status.phase}'=Succeeded pod/$$TEST_POD_DR1 --timeout=60s && \
 	kubectl --context=$(DR1_CONTEXT) logs $$TEST_POD_DR1 && \
 	kubectl --context=$(DR1_CONTEXT) delete pod $$TEST_POD_DR1 || echo "DR1 test failed"
 	@echo ""
@@ -129,7 +142,7 @@ verify-images-in-clusters: ## Verify iptables images are accessible in both DR c
 		--restart=Never \
 		--command \
 		-- sh -c "iptables --version && echo 'DR2 test passed'" && \
-	kubectl --context=$(DR2_CONTEXT) wait --for=condition=complete pod/$$TEST_POD_DR2 --timeout=30s && \
+	kubectl --context=$(DR2_CONTEXT) wait --for=jsonpath='{.status.phase}'=Succeeded pod/$$TEST_POD_DR2 --timeout=60s && \
 	kubectl --context=$(DR2_CONTEXT) logs $$TEST_POD_DR2 && \
 	kubectl --context=$(DR2_CONTEXT) delete pod $$TEST_POD_DR2 || echo "DR2 test failed"
 	@echo "✓ Image verification completed"

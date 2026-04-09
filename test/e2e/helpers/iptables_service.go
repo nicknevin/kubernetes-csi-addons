@@ -178,19 +178,70 @@ done
 			return fmt.Errorf("failed to get DaemonSet status: %w", err)
 		}
 
-		// Check if all replicas are ready
-		if currentDs.Status.DesiredNumberScheduled == currentDs.Status.NumberReady {
-			Logf("[IPTABLES-SERVICE]", "✓ iptables-manager DaemonSet is ready (%d/%d pods ready)",
-				currentDs.Status.NumberReady, currentDs.Status.DesiredNumberScheduled)
+		desired := currentDs.Status.DesiredNumberScheduled
+		ready := currentDs.Status.NumberReady
+		// 0==0 must not count as ready: no pods scheduled yet (image missing, no nodes, etc.).
+		if desired > 0 && ready == desired {
+			Logf("[IPTABLES-SERVICE]", "✓ iptables-manager DaemonSet is ready (%d/%d pods ready)", ready, desired)
 			return nil
 		}
 
-		Logf("[IPTABLES-SERVICE]", "waiting for iptables DaemonSet... (%d/%d pods ready)",
-			currentDs.Status.NumberReady, currentDs.Status.DesiredNumberScheduled)
+		if desired == 0 && i == 4 {
+			logIptablesDaemonSetZeroDesiredDiagnostics(ctx, c)
+		}
+
+		Logf("[IPTABLES-SERVICE]", "waiting for iptables DaemonSet... (%d/%d pods ready)", ready, desired)
 		time.Sleep(2 * time.Second)
 	}
 
-	return fmt.Errorf("iptables DaemonSet failed to reach ready state within timeout")
+	lastReady, lastDesired := lastDaemonSetReadyCounts(c, ctx, daemonsetName, daemonsetNamespace)
+	if lastDesired == 0 {
+		logIptablesDaemonSetZeroDesiredDiagnostics(ctx, c)
+	}
+	return fmt.Errorf("iptables DaemonSet failed to reach ready state within timeout (last observed %d/%d ready; if desired=0, check Nodes are schedulable (kubectl uncordon) and Ready; if 0/0 with schedulable nodes, preload iptables-manager image or set imagePullPolicy)",
+		lastReady, lastDesired)
+}
+
+func lastDaemonSetReadyCounts(c client.Client, ctx context.Context, name, namespace string) (ready, desired int32) {
+	ds := &appsv1.DaemonSet{}
+	if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, ds); err != nil {
+		return -1, -1
+	}
+	return ds.Status.NumberReady, ds.Status.DesiredNumberScheduled
+}
+
+// logIptablesDaemonSetZeroDesiredDiagnostics prints node schedulability when DaemonSet DesiredNumberScheduled is 0.
+// Cordoned nodes (spec.unschedulable) are excluded from DaemonSet placement; existing pods may still appear Running.
+func logIptablesDaemonSetZeroDesiredDiagnostics(ctx context.Context, c client.Client) {
+	nl := &corev1.NodeList{}
+	if err := c.List(ctx, nl); err != nil {
+		Logf("[IPTABLES-SERVICE]", "DaemonSet desired=0 diagnostics: list Nodes: %v", err)
+		return
+	}
+	if len(nl.Items) == 0 {
+		Logf("[IPTABLES-SERVICE]", "DaemonSet desired=0 diagnostics: no Nodes in cluster")
+		return
+	}
+	Logf("[IPTABLES-SERVICE]", "DaemonSet desired=0: node summary (Unschedulable/cordoned nodes get no DaemonSet pods; old pods can still show Running)")
+	for _, n := range nl.Items {
+		ready := false
+		for _, cond := range n.Status.Conditions {
+			if cond.Type == corev1.NodeReady {
+				ready = cond.Status == corev1.ConditionTrue
+				break
+			}
+		}
+		var taintParts []string
+		for _, t := range n.Spec.Taints {
+			taintParts = append(taintParts, fmt.Sprintf("%s=%s:%s", t.Key, t.Value, t.Effect))
+		}
+		taints := strings.Join(taintParts, ", ")
+		if taints == "" {
+			taints = "<none>"
+		}
+		Logf("[IPTABLES-SERVICE]", "  node=%s Ready=%v Unschedulable=%v Taints=%s", n.Name, ready, n.Spec.Unschedulable, taints)
+	}
+	Logf("[IPTABLES-SERVICE]", "hint: kubectl uncordon <node> when Unschedulable is true; then delete stale %s pods if counts stay wrong", IptablesDaemonSetName)
 }
 
 // loadImageToCluster attempts to load the iptables image to the cluster using minikube, kind, or k3d.
@@ -410,16 +461,34 @@ func DeployIptablesServiceWithConfigMap(ctx context.Context, c client.Client, na
 		readyNodes := currentDs.Status.NumberReady
 		desiredNodes := currentDs.Status.DesiredNumberScheduled
 
-		if readyNodes == desiredNodes {
+		if desiredNodes > 0 && readyNodes == desiredNodes {
 			Logf("[IPTABLES-SERVICE]", "✓ iptables-manager DaemonSet is ready (%d/%d pods ready)", readyNodes, desiredNodes)
+			var ds appsv1.DaemonSet
+			if err := c.Get(ctx, client.ObjectKey{Name: daemonset.Name, Namespace: namespace}, &ds); err == nil {
+				for _, co := range ds.Spec.Template.Spec.Containers {
+					if co.Name == IptablesContainerName {
+						Logf("[IPTABLES-SERVICE]", "DaemonSet container %q image: %s imagePullPolicy=%s", co.Name, co.Image, co.ImagePullPolicy)
+						break
+					}
+				}
+			}
 			return nil
+		}
+
+		if desiredNodes == 0 && i == 4 {
+			logIptablesDaemonSetZeroDesiredDiagnostics(ctx, c)
 		}
 
 		Logf("[IPTABLES-SERVICE]", "waiting for DaemonSet readiness... (%d/%d pods ready)", readyNodes, desiredNodes)
 		time.Sleep(2 * time.Second)
 	}
 
-	return fmt.Errorf("timed out waiting for iptables DaemonSet to be ready")
+	lastReady, lastDesired := lastDaemonSetReadyCounts(c, ctx, daemonset.Name, namespace)
+	if lastDesired == 0 {
+		logIptablesDaemonSetZeroDesiredDiagnostics(ctx, c)
+	}
+	return fmt.Errorf("timed out waiting for iptables DaemonSet to be ready (last observed %d/%d; if desired=0, check Nodes are schedulable (kubectl uncordon) and Ready; if 0/0 with schedulable nodes, preload iptables-manager image or adjust imagePullPolicy)",
+		lastReady, lastDesired)
 }
 
 // loadImageViaK3d loads an image via k3d image import command

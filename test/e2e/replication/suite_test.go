@@ -33,6 +33,7 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -78,6 +79,7 @@ func findProjectRoot() (string, error) {
 
 var (
 	cfg                            *rest.Config
+	restConfigDR2                  *rest.Config // set in full-DR mode; used for iptables exec on DR2
 	k8sClient                      client.Client
 	k8sClientDR1                   client.Client
 	k8sClientDR2                   client.Client
@@ -156,6 +158,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	err = csiaddonsv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = discoveryv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	dr1Context = os.Getenv("DR1_CONTEXT")
 	dr2Context = os.Getenv("DR2_CONTEXT")
@@ -166,14 +170,14 @@ var _ = BeforeSuite(func() {
 		cfg, err = restConfigForContext(dr1Context)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg).NotTo(BeNil())
-		cfgDR2, err := restConfigForContext(dr2Context)
+		restConfigDR2, err = restConfigForContext(dr2Context)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cfgDR2).NotTo(BeNil())
+		Expect(restConfigDR2).NotTo(BeNil())
 		Logf("[SETUP]", "creating Kubernetes client for DR1")
 		k8sClientDR1, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 		Expect(err).NotTo(HaveOccurred())
 		Logf("[SETUP]", "creating Kubernetes client for DR2")
-		k8sClientDR2, err = client.New(cfgDR2, client.Options{Scheme: scheme.Scheme})
+		k8sClientDR2, err = client.New(restConfigDR2, client.Options{Scheme: scheme.Scheme})
 		Expect(err).NotTo(HaveOccurred())
 		k8sClient = k8sClientDR1
 	} else {
@@ -357,6 +361,16 @@ func restConfigForContext(contextName string) (*rest.Config, error) {
 // GetK8sClient returns the primary Kubernetes client (DR1 in full-DR mode, else the default cluster).
 func GetK8sClient() client.Client {
 	return k8sClient
+}
+
+// GetRESTConfig returns the REST config for the primary cluster (matches GetK8sClient: DR1 in full-DR mode).
+func GetRESTConfig() *rest.Config {
+	return cfg
+}
+
+// GetRESTConfigDR2 returns the REST config for DR2 when DR1_CONTEXT and DR2_CONTEXT are both set; otherwise nil.
+func GetRESTConfigDR2() *rest.Config {
+	return restConfigDR2
 }
 
 // GetK8sClientForCluster returns the client for the given cluster name when running in full-DR mode

@@ -6,8 +6,8 @@
 DR1_CONTEXT ?= dr1
 DR2_CONTEXT ?= dr2
 
-# Default kubectl context for emergency-cleanup (must be set so the shell gets two args:
-# without it, `$(CONTEXT)` expands empty and only "e2e-*" is passed, which is misread as context)
+# Optional: set CONTEXT to clean only one kubeconfig context (for manual `make emergency-cleanup`).
+# The emergency-cleanup target ignores this and runs against DR1_CONTEXT and DR2_CONTEXT by default.
 CONTEXT ?= dr2
 
 # Default container command (can be overridden)
@@ -34,7 +34,7 @@ help: ## Display this help message
 	@echo "  IPTABLES_IMAGE_TAG   Image tag (default: latest)"
 	@echo "  DR1_CONTEXT          DR1 cluster context (default: dr1)"
 	@echo "  DR2_CONTEXT          DR2 cluster context (default: dr2)"
-	@echo "  CONTEXT              kubectl context for emergency-cleanup (default: dr2)"
+	@echo "  CONTEXT              (optional) single context; emergency-cleanup uses DR1_CONTEXT+DR2_CONTEXT"
 
 .PHONY: build-iptables-image
 build-iptables-image: ## Build the iptables manager image for E2E testing

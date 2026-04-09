@@ -80,13 +80,42 @@ else
 	echo "Using KUBECONFIG: ${KUBECONFIG}"
 fi
 
-if ! kubectl cluster-info &>/dev/null; then
-	echo "ERROR: Cannot access cluster. Set KUBECONFIG and ensure kubectl works."
-	exit 1
+# When DR1_CONTEXT / DR2_CONTEXT are set, verify those contexts (tests use them; default current-context may differ).
+DR1_CONTEXT="${DR1_CONTEXT:-}"
+DR2_CONTEXT="${DR2_CONTEXT:-}"
+if [[ -n "$DR1_CONTEXT" ]]; then
+	if ! kubectl config get-contexts "$DR1_CONTEXT" &>/dev/null; then
+		echo "ERROR: kubectl context '${DR1_CONTEXT}' not found (DR1_CONTEXT). Check: kubectl config get-contexts"
+		exit 1
+	fi
+	if ! kubectl --context="$DR1_CONTEXT" cluster-info &>/dev/null; then
+		echo "ERROR: Cannot reach cluster API with --context=${DR1_CONTEXT}. Is the cluster up? Try: kubectl --context=${DR1_CONTEXT} cluster-info"
+		echo "  If a prior iptables E2E left OUTPUT REJECT rules on a control-plane node, clear them (see test/e2e/utils/emergency-cleanup-iptables.sh) or fix node networking."
+		exit 1
+	fi
+	if [[ -n "$DR2_CONTEXT" ]]; then
+		if ! kubectl config get-contexts "$DR2_CONTEXT" &>/dev/null; then
+			echo "ERROR: kubectl context '${DR2_CONTEXT}' not found (DR2_CONTEXT)."
+			exit 1
+		fi
+		if ! kubectl --context="$DR2_CONTEXT" cluster-info &>/dev/null; then
+			echo "ERROR: Cannot reach cluster API with --context=${DR2_CONTEXT}. Try: kubectl --context=${DR2_CONTEXT} cluster-info"
+			exit 1
+		fi
+	fi
+else
+	if ! kubectl cluster-info &>/dev/null; then
+		echo "ERROR: Cannot access cluster with current context. Set KUBECONFIG, run kubectl cluster-info, or set DR1_CONTEXT=... for this script to use a specific context."
+		exit 1
+	fi
 fi
 CLEANUP_ON_EXIT=1
 
 echo "Current context: $(kubectl config current-context 2>/dev/null || echo 'none')"
+if [[ -n "$DR1_CONTEXT" ]]; then
+	echo "DR1_CONTEXT (verified): ${DR1_CONTEXT}"
+	[[ -n "$DR2_CONTEXT" ]] && echo "DR2_CONTEXT (verified): ${DR2_CONTEXT}"
+fi
 echo ""
 
 echo "[2/5] Test env (pass-through to tests):"

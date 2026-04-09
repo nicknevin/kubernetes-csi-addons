@@ -82,8 +82,9 @@ var _ = Describe("Fault Injection Integration", func() {
 			os.Setenv("E2E_FAULT_INJECTOR", "none")
 
 			config := helpers.FaultInjectionConfig{
-				Client:    k8sClient,
-				Namespace: testNamespace,
+				Client:     k8sClient,
+				RESTConfig: GetRESTConfig(),
+				Namespace:  testNamespace,
 			}
 
 			noOpProvider, err := helpers.NewFaultInjectionProvider(config)

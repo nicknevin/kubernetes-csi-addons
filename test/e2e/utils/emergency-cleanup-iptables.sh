@@ -2,6 +2,9 @@
 
 # Emergency cleanup script for CSI-Addons iptables fence rules
 # This script can be run manually to clean up leftover fence rules after test failures
+#
+# By default removes only OUTPUT rules matching icmp-host-unreachable (staged by e2e iptables provider).
+# Set CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1 to remove every OUTPUT -j REJECT rule (older behavior).
 
 set -euo pipefail
 
@@ -46,6 +49,7 @@ cleanup_namespace() {
     
     if [[ -z "$daemonsets" ]]; then
         log_info "No iptables DaemonSets found in namespace $namespace"
+        kubectl --context="$context" delete configmap csi-addons-iptables-fence-state -n "$namespace" --ignore-not-found=true
         return 0
     fi
     
@@ -83,22 +87,44 @@ cleanup_namespace() {
                     exit 1
                 fi
                 
-                # Count existing REJECT rules
-                reject_count=\$(\$IPT_CMD -S OUTPUT | grep -c \"\-j REJECT\" || true)
-                echo \"[$(date)] Found \$reject_count REJECT rules to clean up\"
+                if [ \"${CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT:-}\" = \"1\" ]; then
+                    match_pattern='\-j REJECT'
+                    echo '[$(date)] Legacy mode: removing all OUTPUT REJECT rules'
+                else
+                    match_pattern='icmp-host-unreachable'
+                    echo '[$(date)] Default: removing only CSI-Addons staged rules (icmp-host-unreachable)'
+                fi
+                tmpf=\"/tmp/csi-addons-em-cleanup-rules.\$\$\"
+                \$IPT_CMD -S OUTPUT | grep \"\$match_pattern\" >\"\$tmpf\" 2>/dev/null || true
+                if [ -s \"\$tmpf\" ]; then
+                    reject_count=\$(awk 'END{print NR}' <\"\$tmpf\")
+                else
+                    reject_count=0
+                fi
+                echo \"[$(date)] Found \$reject_count matching OUTPUT rule line(s)\"
                 
                 if [ \"\$reject_count\" -gt 0 ]; then
-                    # Remove all REJECT rules from OUTPUT chain
-                    \$IPT_CMD -S OUTPUT | grep \"\-j REJECT\" | sed 's/^-A/-D/' | while read rule; do
-                        echo \"[$(date)] Removing rule: \$rule\"
-                        \$IPT_CMD \$rule 2>/dev/null || true
-                    done
-                    
-                    # Verify cleanup
-                    remaining=\$(\$IPT_CMD -S OUTPUT | grep -c \"\-j REJECT\" || true)
-                    echo \"[$(date)] Cleanup completed. Remaining REJECT rules: \$remaining\"
+                    removed=0
+                    failed=0
+                    echo \"[$(date)] Deleting matching OUTPUT rules (list shows successfully removed rules):\"
+                    while IFS= read -r rule || [ -n \"\$rule\" ]; do
+                        [ -z \"\$rule\" ] && continue
+                        del_rule=\$(printf '%s\\n' \"\$rule\" | sed 's/^-A/-D/')
+                        if \$IPT_CMD \$del_rule 2>/dev/null; then
+                            removed=\$((removed + 1))
+                            echo \"[$(date)]   deleted [\$removed/\$reject_count]: \$del_rule\"
+                        else
+                            failed=\$((failed + 1))
+                            echo \"[$(date)]   FAILED [\$failed]: \$del_rule\"
+                        fi
+                    done <\"\$tmpf\"
+                    remaining=\$(\$IPT_CMD -S OUTPUT | grep -c \"\$match_pattern\" || true)
+                    echo \"[$(date)] --- iptables cleanup summary ---\"
+                    echo \"[$(date)] Deleted: \$removed rule(s) (of \$reject_count matched); failed: \$failed; remaining matches: \$remaining\"
+                    rm -f \"\$tmpf\"
                 else
-                    echo '[$(date)] No REJECT rules found to clean up'
+                    echo '[$(date)] No matching OUTPUT rules to clean up'
+                    rm -f \"\$tmpf\"
                 fi
             " 2>/dev/null; then
                 log_success "Successfully cleaned up pod $pod_name"
@@ -107,8 +133,19 @@ cleanup_namespace() {
             fi
         done
     done
+
+    log_info "Removing fence state ConfigMap (if present) in $namespace"
+    kubectl --context="$context" delete configmap csi-addons-iptables-fence-state -n "$namespace" --ignore-not-found=true
     
-    # Optional: Clean up the DaemonSet and namespace resources
+    # Optional: Clean up the DaemonSet in test namespaces; keep suite DaemonSet in csi-addons-system
+    if [[ "$namespace" == "csi-addons-system" ]]; then
+        log_info "Leaving DaemonSet in $namespace (suite); staged iptables rules were cleared above"
+        kubectl --context="$context" delete jobs -n "$namespace" -l app=csi-addons-iptables-exec --ignore-not-found=true
+        kubectl --context="$context" delete jobs -n "$namespace" -l app=csi-addons-iptables-cleanup --ignore-not-found=true
+        log_success "Completed cleanup for namespace $namespace"
+        return 0
+    fi
+
     log_info "Cleaning up DaemonSet resources in namespace $namespace"
     kubectl --context="$context" delete daemonsets -n "$namespace" -l app=csi-addons-iptables-manager --ignore-not-found=true
     kubectl --context="$context" delete jobs -n "$namespace" -l app=csi-addons-iptables-exec --ignore-not-found=true
@@ -165,6 +202,9 @@ Usage:
 Arguments:
   CONTEXT           Kubernetes context to use (default: dr2)
   NAMESPACE_PATTERN Namespace pattern to clean (default: e2e-*)
+
+Environment:
+  CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1  Also remove every OUTPUT -j REJECT rule (not only e2e icmp-host-unreachable rules)
 
 Examples:
   # Clean up all e2e namespaces in dr2 context

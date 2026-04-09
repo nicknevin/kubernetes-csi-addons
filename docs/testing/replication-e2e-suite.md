@@ -11,7 +11,7 @@ The replication E2E suite runs cluster-facing tests that create VolumeReplicatio
 ## Location
 
 - **Package**: `test/e2e/replication/`
-- **Scenarios**: EnableVolumeReplication (L1-E-001 through L1-E-009), DisableVolumeReplication (L1-DIS-001, L1-DIS-002), GetVolumeReplicationInfo (L1-INFO-001, L1-INFO-005, L1-INFO-008, L1-INFO-011, L1-INFO-012, L1-INFO-013, L1-INFO-014), and Full DR (two clusters). L1-E-003 uses NetworkFence to block the node so EnableVolumeReplication fails, then unfences and asserts success. L1-DIS-002 requires DR1_CONTEXT and DR2_CONTEXT; tests that need two clusters skip with a log when not configured.
+- **Scenarios**: EnableVolumeReplication (L1-E-001 through L1-E-009), DisableVolumeReplication (L1-DIS-001, L1-DIS-002), GetVolumeReplicationInfo (L1-INFO-001, L1-INFO-005, L1-INFO-008, L1-INFO-011, L1-INFO-012, L1-INFO-013, L1-INFO-014), and Full DR (two clusters). L1-E-003 blocks the peer via **iptables** (default) or **NetworkFence** (`E2E_FAULT_INJECTOR`) so EnableVolumeReplication fails, then unfences and asserts success. L1-DIS-002 requires DR1_CONTEXT and DR2_CONTEXT; tests that need two clusters skip with a log when not configured.
 
 ## Cleanup
 
@@ -94,7 +94,7 @@ make test-replication-e2e GINKGO_FOCUS="L1-E-001"
 | `REPLICATION_TEST_TIMEOUT`     | Go test timeout for the entire suite (e.g. `30m`, `60m`). Prevents "test timed out after 10m0s". | `30m` |
 | `DR1_CONTEXT`                  | Kubeconfig context name for primary cluster (DR1). Set with `DR2_CONTEXT` for full-DR mode. | (unset) |
 | `DR2_CONTEXT`                  | Kubeconfig context name for secondary cluster (DR2). Set with `DR1_CONTEXT` for full-DR mode. | (unset) |
-| `FENCE_CIDRS`                  | Comma-separated CIDRs for L1-E-003 (peer unreachable) NetworkFence test. If unset, CIDRs are read from CSIAddonsNode `status.networkFenceClientStatus`, or fallback to node InternalIPs. | (CSIAddonsNode or node IPs) |
+| `FENCE_CIDRS`                  | Comma-separated CIDRs for L1-E-003. For **networkfence**, if unset, CIDRs come from CSIAddonsNode `status.networkFenceClientStatus`, then node InternalIPs. For **iptables**, if unset, node InternalIPs are used (no NetworkFenceClass required). | (CSIAddonsNode or node IPs) |
 | `FENCE_CLUSTER_ID`             | ClusterID for Ceph CSI NetworkFenceClass (required for Ceph/Rook). If unset, inferred from `REPLICATION_SECRET_NAMESPACE` when provisioner contains "ceph". | (inferred from secret namespace) |
 
 **Fault injection method (E2E_FAULT_INJECTOR):** L1-E-003 tests peer unreachability by blocking network connectivity. The test suite supports three fault injection backends:
@@ -164,7 +164,7 @@ REPLICATION_SECRET_NAME=rook-csi-rbd-provisioner REPLICATION_SECRET_NAMESPACE=ro
 |------|--------|-------------|----------|
 | **L1-E-001** + L1-INFO-001 | ✅ Implemented | Enable snapshot mode replication | ~6s |
 | **L1-E-002** + L1-INFO-001 | ✅ Implemented | Enable journal mode replication | ~6s |
-| **L1-E-003** + L1-INFO-005/001 | ✅ Implemented | Enable with NetworkFence (peer unreachable scenario) | ~180s |
+| **L1-E-003** + L1-INFO-005/001 | ✅ Implemented | Peer unreachable: iptables (default) or NetworkFence via `E2E_FAULT_INJECTOR` | ~180s |
 | **L1-E-004** + L1-INFO-012 | ✅ Implemented | Invalid schedulingInterval (error handling) | ~6s |
 | **L1-E-005** + L1-INFO-001 | ✅ Implemented | Idempotent enable (no-op on already-enabled) | ~6s |
 | **L1-E-006** + L1-INFO-013 | ✅ Implemented | Invalid secret reference (error handling) | ~6s |

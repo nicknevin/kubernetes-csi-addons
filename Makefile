@@ -163,6 +163,17 @@ test-replication-e2e: manifests generate fmt vet ## Run replication E2E suite ag
 clean-replication-e2e: ## Remove leftover PVCs, VRs, snapshots and test VRCs from e2e-replication-* namespaces. Run before a fresh E2E run. For dry-run: ./hack/clean-replication-e2e-resources.sh --dry-run
 	@bash ./hack/clean-replication-e2e-resources.sh
 
+# Iptables fault-injection visibility (replication E2E): same defaults as test/e2e/helpers/iptables_provider.go
+E2E_IPTABLES_DAEMONSET_NAMESPACE ?= csi-addons-system
+E2E_IPTABLES_DAEMONSET_NAME ?= csi-addons-iptables-manager
+
+.PHONY: show-e2e-iptables-fence-events
+show-e2e-iptables-fence-events: ## Show iptables DaemonSet Events (kubectl describe) on DR1 and DR2 contexts. See hack/show-e2e-iptables-fence-events.sh for env vars.
+	@E2E_IPTABLES_DAEMONSET_NAMESPACE="$(E2E_IPTABLES_DAEMONSET_NAMESPACE)" \
+	 E2E_IPTABLES_DAEMONSET_NAME="$(E2E_IPTABLES_DAEMONSET_NAME)" \
+	 DR1_CONTEXT="$(DR1_CONTEXT)" DR2_CONTEXT="$(DR2_CONTEXT)" \
+	 bash ./hack/show-e2e-iptables-fence-events.sh
+
 .PHONY: check-all-committed
 check-all-committed: ## Fail in case there are uncommitted changes
 	test -z "$(shell git status --short)" || (echo "files were modified: " ; git status --short ; false)

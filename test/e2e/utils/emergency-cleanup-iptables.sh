@@ -3,8 +3,9 @@
 # Emergency cleanup script for CSI-Addons iptables fence rules
 # This script can be run manually to clean up leftover fence rules after test failures
 #
-# By default removes only OUTPUT rules matching icmp-host-unreachable (staged by e2e iptables provider).
-# Set CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1 to remove every OUTPUT -j REJECT rule (older behavior).
+# By default removes OUTPUT and FORWARD rules matching icmp-host-unreachable (staged by e2e iptables provider).
+# Pod traffic to the peer uses FORWARD; host/root netns uses OUTPUT.
+# Set CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1 to remove every OUTPUT/FORWARD -j REJECT rule (older behavior).
 
 set -euo pipefail
 
@@ -89,24 +90,27 @@ cleanup_namespace() {
                 
                 if [ \"${CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT:-}\" = \"1\" ]; then
                     match_pattern='\-j REJECT'
-                    echo '[$(date)] Legacy mode: removing all OUTPUT REJECT rules'
+                    echo '[$(date)] Legacy mode: removing all OUTPUT/FORWARD REJECT rules'
                 else
                     match_pattern='icmp-host-unreachable'
                     echo '[$(date)] Default: removing only CSI-Addons staged rules (icmp-host-unreachable)'
                 fi
                 tmpf=\"/tmp/csi-addons-em-cleanup-rules.\$\$\"
-                \$IPT_CMD -S OUTPUT | grep \"\$match_pattern\" >\"\$tmpf\" 2>/dev/null || true
+                : >\"\$tmpf\"
+                for CHAIN in OUTPUT FORWARD; do
+                    \$IPT_CMD -S \"\$CHAIN\" | grep \"\$match_pattern\" >>\"\$tmpf\" 2>/dev/null || true
+                done
                 if [ -s \"\$tmpf\" ]; then
                     reject_count=\$(awk 'END{print NR}' <\"\$tmpf\")
                 else
                     reject_count=0
                 fi
-                echo \"[$(date)] Found \$reject_count matching OUTPUT rule line(s)\"
+                echo \"[$(date)] Found \$reject_count matching OUTPUT/FORWARD rule line(s)\"
                 
                 if [ \"\$reject_count\" -gt 0 ]; then
                     removed=0
                     failed=0
-                    echo \"[$(date)] Deleting matching OUTPUT rules (list shows successfully removed rules):\"
+                    echo \"[$(date)] Deleting matching rules (list shows successfully removed rules):\"
                     while IFS= read -r rule || [ -n \"\$rule\" ]; do
                         [ -z \"\$rule\" ] && continue
                         del_rule=\$(printf '%s\\n' \"\$rule\" | sed 's/^-A/-D/')
@@ -118,12 +122,14 @@ cleanup_namespace() {
                             echo \"[$(date)]   FAILED [\$failed]: \$del_rule\"
                         fi
                     done <\"\$tmpf\"
-                    remaining=\$(\$IPT_CMD -S OUTPUT | grep -c \"\$match_pattern\" || true)
+                    remaining_out=\$(\$IPT_CMD -S OUTPUT | grep -c \"\$match_pattern\" || true)
+                    remaining_fwd=\$(\$IPT_CMD -S FORWARD | grep -c \"\$match_pattern\" || true)
+                    remaining=\$((remaining_out + remaining_fwd))
                     echo \"[$(date)] --- iptables cleanup summary ---\"
-                    echo \"[$(date)] Deleted: \$removed rule(s) (of \$reject_count matched); failed: \$failed; remaining matches: \$remaining\"
+                    echo \"[$(date)] Deleted: \$removed rule(s) (of \$reject_count matched); failed: \$failed; remaining matches (OUTPUT+FORWARD): \$remaining\"
                     rm -f \"\$tmpf\"
                 else
-                    echo '[$(date)] No matching OUTPUT rules to clean up'
+                    echo '[$(date)] No matching OUTPUT/FORWARD rules to clean up'
                     rm -f \"\$tmpf\"
                 fi
             " 2>/dev/null; then
@@ -204,7 +210,7 @@ Arguments:
   NAMESPACE_PATTERN Namespace pattern to clean (default: e2e-*)
 
 Environment:
-  CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1  Also remove every OUTPUT -j REJECT rule (not only e2e icmp-host-unreachable rules)
+  CSI_ADDONS_IPTABLES_LEGACY_FULL_REJECT=1  Also remove every OUTPUT/FORWARD -j REJECT rule (not only e2e icmp-host-unreachable rules)
 
 Examples:
   # Clean up all e2e namespaces in dr2 context

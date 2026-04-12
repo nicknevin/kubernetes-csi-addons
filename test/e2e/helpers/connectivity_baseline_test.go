@@ -81,6 +81,17 @@ func TestCompareProbeResultsToBaseline_Fenced(t *testing.T) {
 	}
 }
 
+func TestCompareProbeResultsToBaseline_Fenced_pingLossEnoughWhenTracerouteNoisy(t *testing.T) {
+	t.Parallel()
+	// Mirrors e2e: after fence, ping drops but ip route + traceroute probes can stay "true"
+	// (local route lookup; traceroute matches any hop line).
+	before := &ConnectivityBaseline{PingOK: true, IPRouteOK: true, TracerouteOK: true}
+	after := &ConnectivityBaseline{PingOK: false, IPRouteOK: true, TracerouteOK: true}
+	if !CompareProbeResultsToBaseline(before, after, true) {
+		t.Fatal("expected fenced match when baseline ping worked and ping fails after fence")
+	}
+}
+
 func TestCompareProbeResultsToBaseline_Reachable(t *testing.T) {
 	t.Parallel()
 	before := &ConnectivityBaseline{PingOK: true, IPRouteOK: false, TracerouteOK: true}

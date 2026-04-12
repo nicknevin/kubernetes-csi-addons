@@ -505,15 +505,26 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}
 
 			// Verify that fencing is effective
+			var lastFenceVerifyReason string
 			Eventually(func() bool {
+				lastFenceVerifyReason = ""
 				for _, cidr := range cidrs {
 					fenced, err := faultProvider.VerifyConnectivity(ctx, cidr, true, fenceBaselineRef(fenceBaselines, cidr))
-					if err != nil || !fenced {
+					if err != nil {
+						lastFenceVerifyReason = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
+						return false
+					}
+					if !fenced {
+						lastFenceVerifyReason = fmt.Sprintf(
+							"probes for %s still match pre-fence reachability (expected partitioned vs baseline; see [DR2] VerifyConnectivity logs above)",
+							cidr)
 						return false
 					}
 				}
 				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Network should be fenced successfully")
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+				"L1-PROM-003: after iptables fence, DR2 connectivity jobs must show partition vs baseline within 2m (CIDRs %v). %s",
+				cidrs, lastFenceVerifyReason)
 
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=false; should fail)")
 			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
@@ -540,15 +551,26 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}
 
 			// Verify connectivity is restored
+			var lastUnfenceVerifyReason003 string
 			Eventually(func() bool {
+				lastUnfenceVerifyReason003 = ""
 				for _, cidr := range cidrs {
 					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, fenceBaselineRef(fenceBaselines, cidr))
-					if err != nil || !connected {
+					if err != nil {
+						lastUnfenceVerifyReason003 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
+						return false
+					}
+					if !connected {
+						lastUnfenceVerifyReason003 = fmt.Sprintf(
+							"probes for %s do not match reachable baseline yet after unfence (see [DR2] VerifyConnectivity logs above)",
+							cidr)
 						return false
 					}
 				}
 				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Connectivity should be restored after unfencing")
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+				"L1-PROM-003: after unfence, DR2 connectivity jobs must match pre-fence reachability within 2m (CIDRs %v). %s",
+				cidrs, lastUnfenceVerifyReason003)
 
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
@@ -731,15 +753,26 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}
 
 			// Verify connectivity is restored
+			var lastUnfenceVerifyReason004 string
 			Eventually(func() bool {
+				lastUnfenceVerifyReason004 = ""
 				for _, cidr := range cidrs {
 					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, fenceBaselineRef(fenceBaselines, cidr))
-					if err != nil || !connected {
+					if err != nil {
+						lastUnfenceVerifyReason004 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
+						return false
+					}
+					if !connected {
+						lastUnfenceVerifyReason004 = fmt.Sprintf(
+							"probes for %s do not match reachable baseline yet after unfence (see [DR2] VerifyConnectivity logs above)",
+							cidr)
 						return false
 					}
 				}
 				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(), "Connectivity should be restored after unfencing")
+			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+				"L1-PROM-004: after unfence, DR2 connectivity jobs must match pre-fence reachability within 2m (CIDRs %v). %s",
+				cidrs, lastUnfenceVerifyReason004)
 
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {

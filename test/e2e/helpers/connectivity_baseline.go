@@ -17,8 +17,10 @@ import (
 )
 
 // CompareProbeResultsToBaseline returns whether current probes match expected fence state.
-// When expectedFenced is true, probes that were true in baseline must be false after (except
-// ip_route may remain true when only OUTPUT REJECT is used — see comments).
+// When expectedFenced is true, probes that were true in baseline must be false after, with
+// exceptions: ip route get may stay true (local FIB only); if baseline ping succeeded, ping
+// loss alone proves partition even when traceroute still matches (traceroute only checks for
+// any hop line and often stays “true” after a fence).
 func CompareProbeResultsToBaseline(before, after *ConnectivityBaseline, expectedFenced bool) bool {
 	if before == nil || after == nil {
 		return false
@@ -33,13 +35,18 @@ func baselineMatchesFenced(before, after *ConnectivityBaseline) bool {
 	if before.PingOK && after.PingOK {
 		return false
 	}
+	// Baseline had ICMP to the peer; losing it after fence proves partition. Do not require
+	// traceroute to flip: the probe marks success if any hop line exists (often only the gateway).
+	if before.PingOK && !after.PingOK {
+		return true
+	}
 	if before.TracerouteOK && after.TracerouteOK {
 		return false
 	}
 	if before.IPRouteOK && after.IPRouteOK {
-		// `ip route get` can still print a route when traffic is dropped by OUTPUT REJECT.
+		// `ip route get` can still print a route when traffic is dropped by iptables.
 		if before.PingOK || before.TracerouteOK {
-			Logf("[INFO]", "ip route get still shows a route after OUTPUT REJECT; ICMP/traceroute already indicate loss")
+			Logf("[INFO]", "ip route get still shows a route after fence; ICMP or traceroute already indicate loss")
 			return true
 		}
 		return false

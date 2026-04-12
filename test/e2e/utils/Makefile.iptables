@@ -37,7 +37,7 @@ help: ## Display this help message
 	@echo "  CONTEXT              (optional) single context; emergency-cleanup uses DR1_CONTEXT+DR2_CONTEXT"
 
 .PHONY: build-iptables-image
-build-iptables-image: ## Build the iptables manager image for E2E testing
+build-iptables-image: ## Build the iptables manager image for E2E testing (tools baked in; pods use ImagePullPolicy=Never, no runtime apk)
 	@echo "Building iptables image: $(IPTABLES_IMAGE)"
 	@echo "Using container runtime: $(CONTAINER_CMD)"
 	@echo "Build context: $(BUILD_CONTEXT)"

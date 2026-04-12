@@ -1,4 +1,5 @@
-# Custom iptables image for CSI-Addons fault injection testing
+# Custom iptables image for CSI-Addons fault injection testing.
+# Install all packages here (apk add in build). E2E DaemonSets and connectivity probe Jobs must not run apk/apt at runtime.
 FROM alpine:3.19
 
 LABEL org.opencontainers.image.title="CSI-Addons Iptables Manager"

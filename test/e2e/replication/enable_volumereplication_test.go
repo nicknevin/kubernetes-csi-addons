@@ -188,7 +188,7 @@ var _ = Describe("EnableVolumeReplication", func() {
 				By("Getting fence CIDRs (from FENCE_CIDRS env, CSIAddonsNode status, or node InternalIPs)")
 				cidrs = GetFenceCIDRs(ctx, c, env.Provisioner, nfcName)
 				if len(cidrs) == 0 {
-					Skip("L1-E-003 could not get CIDRs: set FENCE_CIDRS (comma-separated, e.g. FENCE_CIDRS=192.168.122.164/32) or ensure cluster has nodes with InternalIP")
+					Skip("L1-E-003 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure nodes have InternalIPs for NetworkFence fallback")
 				}
 
 				nfName := "nf-fence-" + nsName

@@ -480,7 +480,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				cidrs = GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
 			}
 			if len(cidrs) == 0 {
-				Skip("L1-PROM-003 could not get CIDRs: set FENCE_CIDRS, or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES for iptables (peer backends from DR1), or CSI networkFenceClientStatus for NetworkFence")
+				Skip("L1-PROM-003 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
 			}
 
 			By(fmt.Sprintf("[DR2] Using CIDRs for peer cluster fencing: %v", cidrs))
@@ -706,7 +706,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				cidrs = GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
 			}
 			if len(cidrs) == 0 {
-				Skip("L1-PROM-004 could not get CIDRs: set FENCE_CIDRS, or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES for iptables, or CSI networkFenceClientStatus for NetworkFence")
+				Skip("L1-PROM-004 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
 			}
 
 			fenceBaselines := establishIptablesFenceBaselines(ctx, faultProvider, cidrs)

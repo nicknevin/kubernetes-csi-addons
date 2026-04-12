@@ -445,9 +445,9 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			nfc = CreateNetworkFenceClass(ctx, cDR1, nfcName, env.Provisioner, secretName, secretNs)
 
 			By("[DR1] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
+			cidrs := GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, nfcName)
 			if len(cidrs) == 0 {
-				Skip("L1-DEM-003 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
+				Skip("L1-DEM-003 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure peer cluster (DR2) has node InternalIPs for NetworkFence fallback")
 			}
 
 			nfName := "nf-dem-003-" + nsName
@@ -590,9 +590,9 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			nfc = CreateNetworkFenceClass(ctx, cDR1, nfcName, env.Provisioner, secretName, secretNs)
 
 			By("[DR1] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRs(ctx, cDR1, env.Provisioner, nfcName)
+			cidrs := GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, nfcName)
 			if len(cidrs) == 0 {
-				Skip("L1-DEM-004 could not get CIDRs: set FENCE_CIDRS or ensure cluster has nodes with InternalIP")
+				Skip("L1-DEM-004 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure peer cluster (DR2) has node InternalIPs for NetworkFence fallback")
 			}
 
 			nfName := "nf-dem-004-" + nsName

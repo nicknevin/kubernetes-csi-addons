@@ -302,10 +302,15 @@ func loadImageViaMinikube(image, context string) error {
 		return fmt.Errorf("failed to start container save: %w", err)
 	}
 	if err := loadCmd.Run(); err != nil {
-		saveCmd.Wait() // Clean up save process if load fails
+		if werr := saveCmd.Wait(); werr != nil {
+			return fmt.Errorf("failed to load image via minikube: %w (save wait: %v)", err, werr)
+		}
 		return fmt.Errorf("failed to load image via minikube: %w", err)
 	}
-	return saveCmd.Wait()
+	if err := saveCmd.Wait(); err != nil {
+		return fmt.Errorf("container save did not complete: %w", err)
+	}
+	return nil
 }
 
 // loadImageViaKind loads an image via kind load docker-image command

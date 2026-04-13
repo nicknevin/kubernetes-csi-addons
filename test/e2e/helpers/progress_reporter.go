@@ -169,7 +169,7 @@ func (pr *ProgressReporter) writeToReport(msg string) {
 		fmt.Printf("[PROGRESS] Warning: could not open report file %s: %v\n", pr.reportFile, err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(msg); err != nil {
 		fmt.Printf("[PROGRESS] Warning: could not write to report file %s: %v\n", pr.reportFile, err)

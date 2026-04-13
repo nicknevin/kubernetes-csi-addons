@@ -58,7 +58,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -66,17 +66,17 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
-			fmt.Fprintf(GinkgoWriter, "  [DEBUG] Creating VR with replicationState constant value=%v (should be 'secondary')\n", replicationv1alpha1.Secondary)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DEBUG] Creating VR with replicationState constant value=%v (should be 'secondary')\n", replicationv1alpha1.Secondary)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][VR] AFTER CREATION Spec.ReplicationState=%v (type=%T)\n", vrDR2.Spec.ReplicationState, vrDR2.Spec.ReplicationState)
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] AFTER CREATION Spec.ReplicationState=%v (type=%T)\n", vrDR2.Spec.ReplicationState, vrDR2.Spec.ReplicationState)
 
 			By("Waiting for secondary VR on DR2 to reach Secondary state and stable")
 			Eventually(func() string {
@@ -87,7 +87,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			var nfc *csiaddonsv1alpha1.NetworkFenceClass
@@ -116,7 +116,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Waiting for VR state to transition to Secondary")
 			Eventually(func() string {
 				_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
 				return string(vrDR1.Status.State)
 			}, 5*time.Minute, 5*time.Second).Should(Equal(string(replicationv1alpha1.SecondaryState)),
 				"VR should transition to Secondary state after demotion request")
@@ -153,7 +153,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem-idem", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-idem-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -161,19 +161,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem-idem", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem-idem", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -233,7 +233,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem-io", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-io-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -241,19 +241,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem-io", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem-io", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -277,7 +277,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Waiting for VR state to transition to Secondary (graceful demotion)")
 			Eventually(func() string {
 				_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
 				return string(vrDR1.Status.State)
 			}, 5*time.Minute, 5*time.Second).Should(Equal(string(replicationv1alpha1.SecondaryState)),
 				"VR should transition to Secondary state after demotion request with active workload")
@@ -314,7 +314,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem-force", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-force-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -322,19 +322,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem-force", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem-force", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -358,7 +358,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Waiting for VR state to transition to Secondary (force demotion)")
 			Eventually(func() string {
 				_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(vrDR1))
 				return string(vrDR1.Status.State)
 			}, 5*time.Minute, 5*time.Second).Should(Equal(string(replicationv1alpha1.SecondaryState)),
 				"VR should transition to Secondary state after force demotion request")
@@ -399,7 +399,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem-003", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-003-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -407,19 +407,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem-003", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem-003", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			var nfc *csiaddonsv1alpha1.NetworkFenceClass
@@ -489,7 +489,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 					if cond.Type == "Degraded" {
 						isHealthy := cond.Status == metav1.ConditionFalse
 						if isHealthy {
-							fmt.Fprintf(GinkgoWriter, "  [DR1][VR recovered] %s\n", FormatVRStatus(vrDR1))
+							_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR recovered] %s\n", FormatVRStatus(vrDR1))
 						}
 						return isHealthy
 					}
@@ -500,7 +500,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("[DR1] Waiting for controller to retry and demote to succeed")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR after unfence] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR after unfence] %s\n", FormatVRStatus(v))
 			})
 			err = cDR1.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR1.Name}, vrDR1)
 			Expect(err).NotTo(HaveOccurred())
@@ -544,7 +544,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-dem-004", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dem-004-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -552,19 +552,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-dem-004", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-dem-004", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			var nfc *csiaddonsv1alpha1.NetworkFenceClass
@@ -608,7 +608,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 
 			By("[DR1] Waiting for VR to report success (Replicating or Completed with Demoted reason)")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR force demote] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR force demote] %s\n", FormatVRStatus(v))
 			})
 			err = cDR1.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR1.Name}, vrDR1)
 			Expect(err).NotTo(HaveOccurred())
@@ -645,7 +645,7 @@ var _ = Describe("DemoteVolumeReplication", func() {
 					if cond.Type == "Degraded" {
 						isHealthy := cond.Status == metav1.ConditionFalse
 						if isHealthy {
-							fmt.Fprintf(GinkgoWriter, "  [DR1][VR recovered] %s\n", FormatVRStatus(vrDR1))
+							_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR recovered] %s\n", FormatVRStatus(vrDR1))
 						}
 						return isHealthy
 					}

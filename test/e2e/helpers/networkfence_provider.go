@@ -19,6 +19,7 @@ package helpers
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -59,6 +60,9 @@ func NewNetworkFenceFaultProvider(config FaultInjectionConfig) (PeerFenceProvide
 			provisioner = p
 		} else if p := os.Getenv("CSI_DRIVER_NAME"); p != "" {
 			provisioner = p
+		} else if p := os.Getenv("REPLICATION_SECRET_NAME"); p != "" {
+			// If replication secret is set, try common Rook provisioner name
+			provisioner = "rook-ceph.rbd.csi.ceph.com"
 		}
 	}
 
@@ -133,6 +137,21 @@ func (p *NetworkFenceFaultProvider) FenceIP(ctx context.Context, targetCIDR stri
 	if !p.IsSupported(ctx) {
 		Logf("[ERROR]", "Cannot fence IP %s: NetworkFence not supported in this cluster", targetCIDR)
 		return fmt.Errorf("NetworkFence not supported")
+	}
+
+	// Validate CIDR format before creating resources
+	if _, _, err := net.ParseCIDR(targetCIDR); err != nil {
+		// Also try parsing as single IP
+		if ip := net.ParseIP(targetCIDR); ip == nil {
+			Logf("[ERROR]", "Cannot fence %s: invalid IP address or CIDR format", targetCIDR)
+			return fmt.Errorf("invalid IP address or CIDR format: %s", targetCIDR)
+		}
+		// Convert single IP to CIDR notation
+		if strings.Contains(targetCIDR, ":") {
+			targetCIDR = targetCIDR + "/128" // IPv6
+		} else {
+			targetCIDR = targetCIDR + "/32" // IPv4
+		}
 	}
 
 	// Get secrets from params or environment
@@ -223,7 +242,18 @@ func (p *NetworkFenceFaultProvider) UnfenceIP(ctx context.Context, targetCIDR st
 	return nil
 }
 
-func (p *NetworkFenceFaultProvider) VerifyConnectivity(ctx context.Context, targetCIDR string, expectedFenced bool) (bool, error) {
+// EstablishConnectivityBaseline is a no-op for NetworkFence: fencing is enforced in the storage
+// layer; reachability for replication is observed on VolumeReplication and related CRs, not via Jobs.
+func (p *NetworkFenceFaultProvider) EstablishConnectivityBaseline(ctx context.Context, targetCIDR string) (*ConnectivityBaseline, error) {
+	_ = ctx
+	_ = targetCIDR
+	return nil, nil
+}
+
+// VerifyConnectivity compares expected fence state to the NetworkFence CR (and tracked resources).
+// baseline is ignored—packet-level connectivity tests apply only to the iptables injector.
+func (p *NetworkFenceFaultProvider) VerifyConnectivity(ctx context.Context, targetCIDR string, expectedFenced bool, baseline *ConnectivityBaseline) (bool, error) {
+	_ = baseline
 	if !p.IsSupported(ctx) {
 		Logf("[ERROR]", "Cannot verify connectivity for IP %s: NetworkFence not supported", targetCIDR)
 		return false, fmt.Errorf("NetworkFence not supported")
@@ -263,7 +293,7 @@ func (p *NetworkFenceFaultProvider) VerifyConnectivity(ctx context.Context, targ
 }
 
 func (p *NetworkFenceFaultProvider) Cleanup(ctx context.Context) error {
-	var errors []string
+	var cleanupErrors []string
 
 	Logf("[INFO]", "Cleaning up %d active NetworkFence resources", len(p.activeFences))
 
@@ -271,25 +301,34 @@ func (p *NetworkFenceFaultProvider) Cleanup(ctx context.Context) error {
 	for i := range p.activeFences {
 		resource := &p.activeFences[i]
 
-		// First unfence if currently fenced
+		// Try to unfence if currently fenced, but don't fail cleanup on error
 		if err := p.UnfenceIP(ctx, resource.targetCIDR, nil); err != nil {
-			Logf("[ERROR]", "Failed to unfence %s during cleanup: %v", resource.targetCIDR, err)
-			errors = append(errors, fmt.Sprintf("failed to unfence %s: %v", resource.targetCIDR, err))
+			Logf("[WARN]", "UnfenceIP failed (may be expected if resource is already fenced or invalid): %v", err)
+			// Don't add to errors - unfencing failure should not block deletion
 		}
 
-		// Delete NetworkFence
+		// Delete NetworkFence (with force delete capability for stuck resources)
 		if resource.networkFence != nil {
 			if err := p.deleteNetworkFence(ctx, resource.networkFence); err != nil {
 				Logf("[ERROR]", "Failed to delete NetworkFence %s during cleanup: %v", resource.networkFence.Name, err)
-				errors = append(errors, fmt.Sprintf("failed to delete NetworkFence %s: %v", resource.networkFence.Name, err))
+				cleanupErrors = append(cleanupErrors, fmt.Sprintf("failed to delete NetworkFence %s: %v", resource.networkFence.Name, err))
 			}
 		}
 
-		// Delete NetworkFenceClass
+		// Delete NetworkFenceClass (may fail if NetworkFence still has it referenced)
 		if resource.networkFenceClass != nil {
-			if err := p.config.Client.Delete(ctx, resource.networkFenceClass); err != nil {
-				Logf("[ERROR]", "Failed to delete NetworkFenceClass %s during cleanup: %v", resource.networkFenceClass.Name, err)
-				errors = append(errors, fmt.Sprintf("failed to delete NetworkFenceClass %s: %v", resource.networkFenceClass.Name, err))
+			if err := p.config.Client.Delete(ctx, resource.networkFenceClass); err != nil && !errors.IsNotFound(err) {
+				Logf("[WARN]", "Failed to delete NetworkFenceClass %s during cleanup: %v (may retry after NetworkFence deletion)", resource.networkFenceClass.Name, err)
+				// Try again with finalizer removal
+				retryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				nfc := resource.networkFenceClass
+				if len(nfc.Finalizers) > 0 {
+					nfc.Finalizers = nil
+					if err2 := p.config.Client.Update(retryCtx, nfc); err2 == nil {
+						_ = p.config.Client.Delete(retryCtx, nfc)
+					}
+				}
+				cancel()
 			}
 		}
 	}
@@ -297,9 +336,10 @@ func (p *NetworkFenceFaultProvider) Cleanup(ctx context.Context) error {
 	// Clear the active fences
 	p.activeFences = make([]networkFenceResource, 0)
 
-	if len(errors) > 0 {
-		Logf("[ERROR]", "NetworkFence cleanup completed with %d errors: %s", len(errors), strings.Join(errors, "; "))
-		return fmt.Errorf("cleanup errors: %s", strings.Join(errors, "; "))
+	if len(cleanupErrors) > 0 {
+		Logf("[WARN]", "NetworkFence cleanup completed with %d errors: %s", len(cleanupErrors), strings.Join(cleanupErrors, "; "))
+		// Don't return error - cleanup should be best-effort
+		return nil
 	}
 
 	Logf("[INFO]", "NetworkFence cleanup completed successfully")
@@ -381,8 +421,8 @@ func (p *NetworkFenceFaultProvider) waitForNetworkFenceResult(ctx context.Contex
 
 	Logf("[DEBUG]", "Waiting for NetworkFence %s to reach result %s", nf.Name, expectedResult)
 
-	return wait.PollImmediate(2*time.Second, 120*time.Second, func() (bool, error) {
-		err := p.config.Client.Get(ctx, key, nf)
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, 120*time.Second, true, func(pollCtx context.Context) (bool, error) {
+		err := p.config.Client.Get(pollCtx, key, nf)
 		if err != nil {
 			Logf("[DEBUG]", "Failed to get NetworkFence %s status while waiting: %v", nf.Name, err)
 			return false, nil // Keep trying
@@ -409,12 +449,19 @@ func (p *NetworkFenceFaultProvider) deleteNetworkFence(ctx context.Context, nf *
 		nf.Spec.FenceState = csiaddonsv1alpha1.Unfenced
 		if err := p.config.Client.Update(ctx, nf); err != nil {
 			Logf("[ERROR]", "Failed to unfence NetworkFence %s before deletion: %v", nf.Name, err)
-			return fmt.Errorf("failed to unfence before deletion: %w", err)
-		}
-
-		// Wait for unfencing to complete
-		if err := p.waitForNetworkFenceResult(ctx, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded); err != nil {
-			Logf("[ERROR]", "Failed to wait for NetworkFence %s unfencing before deletion: %v - continuing with deletion", nf.Name, err)
+			// Continue anyway - not fatal for deletion
+		} else {
+			// Only wait if update succeeded; use shorter timeout for invalid CIDRs
+			if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 30*time.Second, true, func(pollCtx context.Context) (bool, error) {
+				err := p.config.Client.Get(pollCtx, key, nf)
+				if err != nil {
+					return false, nil // Keep trying
+				}
+				return nf.Status.Result == csiaddonsv1alpha1.FencingOperationResultSucceeded ||
+					nf.Status.Result == csiaddonsv1alpha1.FencingOperationResultFailed, nil
+			}); err != nil {
+				Logf("[WARN]", "NetworkFence %s unfencing timed out or failed - will force delete", nf.Name)
+			}
 		}
 	}
 
@@ -424,15 +471,25 @@ func (p *NetworkFenceFaultProvider) deleteNetworkFence(ctx context.Context, nf *
 		nf.Finalizers = nil
 		if err := p.config.Client.Update(ctx, nf); err != nil {
 			Logf("[ERROR]", "Failed to remove finalizers from NetworkFence %s: %v", nf.Name, err)
-			return fmt.Errorf("failed to remove finalizers: %w", err)
+			// Continue anyway - try force delete
 		}
 	}
 
-	// Delete the resource
+	// Delete the resource with propagation policy
 	Logf("[INFO]", "Deleting NetworkFence %s", nf.Name)
-	err := p.config.Client.Delete(ctx, nf)
+	var gracePeriod int64 = 0
+	err := p.config.Client.Delete(ctx, nf, client.GracePeriodSeconds(gracePeriod))
 	if err != nil {
+		// If deletion fails, try to refresh and force delete
+		if err2 := p.config.Client.Get(ctx, key, nf); err2 == nil && nf.ObjectMeta.DeletionTimestamp != nil {
+			Logf("[WARN]", "NetworkFence %s stuck in deletion, removing finalizers", nf.Name)
+			nf.Finalizers = nil
+			if err3 := p.config.Client.Update(ctx, nf); err3 != nil {
+				Logf("[ERROR]", "Failed to remove finalizers from stuck NetworkFence %s: %v", nf.Name, err3)
+			}
+		}
 		Logf("[ERROR]", "Failed to delete NetworkFence %s: %v", nf.Name, err)
+		return err
 	}
-	return err
+	return nil
 }

@@ -481,7 +481,7 @@ func (p *NetworkFenceFaultProvider) deleteNetworkFence(ctx context.Context, nf *
 	err := p.config.Client.Delete(ctx, nf, client.GracePeriodSeconds(gracePeriod))
 	if err != nil {
 		// If deletion fails, try to refresh and force delete
-		if err2 := p.config.Client.Get(ctx, key, nf); err2 == nil && nf.ObjectMeta.DeletionTimestamp != nil {
+		if err2 := p.config.Client.Get(ctx, key, nf); err2 == nil && nf.DeletionTimestamp != nil {
 			Logf("[WARN]", "NetworkFence %s stuck in deletion, removing finalizers", nf.Name)
 			nf.Finalizers = nil
 			if err3 := p.config.Client.Update(ctx, nf); err3 != nil {

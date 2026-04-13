@@ -50,7 +50,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, c, env, nsName)
 			By("Creating PVC and waiting for Bound (poll every 2s, timeout 120s)")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-dis-primary", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			vrcName := "vrc-dis-" + nsName
@@ -70,7 +70,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Waiting for Replicating=True or Completed=True (timeout from REPLICATION_POLL_TIMEOUT)")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, c, vr, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [VR] %s\n", FormatVRStatus(v))
 			})
 			err := c.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrName}, vr)
 			Expect(err).NotTo(HaveOccurred())
@@ -109,7 +109,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-primary", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dis-dr-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -117,12 +117,12 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Restoring secondary PVC from primary on DR2 (backup/restore for RBD mirror)")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-secondary", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-secondary", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
@@ -142,7 +142,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Waiting for secondary VR on DR2 to reach Replicating or Completed")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("L1-DIS-002: Deleting secondary VolumeReplication to trigger DisableVolumeReplication (force=false)")
@@ -171,7 +171,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating PVC and waiting for Bound")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-idem-dis", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			DeferCleanup(func() {
@@ -207,7 +207,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating secondary PVC on DR2 (no replication)")
 			pvcDR2 := CreatePVC(ctx, cDR2, nsName, "pvc-idem-dis-sec", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			DeferCleanup(func() {
@@ -242,7 +242,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, c, env, nsName)
 			By("Creating PVC and waiting for Bound")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-fence-dis", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			vrcName := "vrc-fence-dis-" + nsName
@@ -309,7 +309,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, c, env, nsName)
 			By("Creating PVC and waiting for Bound")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-fence-dis-force", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			vrcName := "vrc-fence-dis-force-" + nsName
@@ -377,7 +377,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, c, env, nsName)
 			By("Creating PVC and waiting for Bound")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-dis-force", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			vrcName := "vrc-dis-force-" + nsName
@@ -390,7 +390,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Waiting for Replicating=True or Completed=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, c, vr, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -435,7 +435,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-force", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-dis-force-dr-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -443,19 +443,19 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-force", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-force", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating or Completed")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -498,7 +498,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating PVC and waiting for Bound")
 			pvc := CreatePVC(ctx, c, nsName, "pvc-force-idem", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			DeferCleanup(func() {
@@ -534,7 +534,7 @@ var _ = Describe("DisableVolumeReplication", func() {
 
 			By("Creating secondary PVC on DR2 (no replication)")
 			pvcDR2 := CreatePVC(ctx, cDR2, nsName, "pvc-force-idem-sec", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			DeferCleanup(func() {

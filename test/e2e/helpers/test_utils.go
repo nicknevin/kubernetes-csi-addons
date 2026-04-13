@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,7 +54,7 @@ func CreateNamespace(ctx context.Context, c client.Client, name string) *corev1.
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 	}
 	err := c.Create(ctx, ns)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	Logf("[CREATE]", "Created namespace: %s", name)
 	return ns
 }
@@ -67,7 +67,7 @@ func DeleteNamespace(ctx context.Context, c client.Client, ns *corev1.Namespace)
 	err := c.Delete(ctx, ns)
 	if err != nil && !errors.IsNotFound(err) {
 		Logf("[ERROR]", "Failed to delete namespace %s: %v", ns.Name, err)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	} else if err == nil {
 		Logf("[DELETE]", "Deleted namespace: %s", ns.Name)
 	}
@@ -81,7 +81,7 @@ func DeletePVC(ctx context.Context, c client.Client, pvc *corev1.PersistentVolum
 	err := c.Delete(ctx, pvc)
 	if err != nil && !errors.IsNotFound(err) {
 		Logf("[ERROR]", "Failed to delete PVC %s/%s: %v", pvc.Namespace, pvc.Name, err)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	} else if err == nil {
 		Logf("[DELETE]", "Deleted PVC: %s/%s", pvc.Namespace, pvc.Name)
 	}
@@ -95,7 +95,7 @@ func DeletePV(ctx context.Context, c client.Client, pv *corev1.PersistentVolume)
 	err := c.Delete(ctx, pv)
 	if err != nil && !errors.IsNotFound(err) {
 		Logf("[ERROR]", "Failed to delete PV %s: %v", pv.Name, err)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	} else if err == nil {
 		Logf("[DELETE]", "Deleted PV: %s", pv.Name)
 	}
@@ -109,7 +109,7 @@ func CreateSecret(ctx context.Context, c client.Client, namespace, name string, 
 		Data:       data,
 	}
 	err := c.Create(ctx, secret)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	Logf("[CREATE]", "Created secret: %s/%s", namespace, name)
 	return secret
 }
@@ -122,7 +122,7 @@ func DeleteSecret(ctx context.Context, c client.Client, secret *corev1.Secret) {
 	err := c.Delete(ctx, secret)
 	if err != nil && !errors.IsNotFound(err) {
 		Logf("[ERROR]", "Failed to delete secret %s/%s: %v", secret.Namespace, secret.Name, err)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	} else if err == nil {
 		Logf("[DELETE]", "Deleted secret: %s/%s", secret.Namespace, secret.Name)
 	}
@@ -132,10 +132,10 @@ func DeleteSecret(ctx context.Context, c client.Client, secret *corev1.Secret) {
 // This is useful when resources have finalizers or take time to be cleaned up.
 func WaitForResourceDeletion(ctx context.Context, c client.Client, obj client.Object, timeout time.Duration) {
 	key := client.ObjectKeyFromObject(obj)
-	Eventually(func() bool {
+	gomega.Eventually(func() bool {
 		err := c.Get(ctx, key, obj)
 		return errors.IsNotFound(err)
-	}, timeout, 2*time.Second).Should(BeTrue(),
+	}, timeout, 2*time.Second).Should(gomega.BeTrue(),
 		"Resource %s %s/%s should be deleted", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
 }
 
@@ -156,7 +156,7 @@ func CreateConfigMap(ctx context.Context, c client.Client, namespace, name strin
 		Data:       data,
 	}
 	err := c.Create(ctx, cm)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	Logf("[CREATE]", "Created ConfigMap: %s/%s", namespace, name)
 	return cm
 }
@@ -169,7 +169,7 @@ func DeleteConfigMap(ctx context.Context, c client.Client, cm *corev1.ConfigMap)
 	err := c.Delete(ctx, cm)
 	if err != nil && !errors.IsNotFound(err) {
 		Logf("[ERROR]", "Failed to delete ConfigMap %s/%s: %v", cm.Namespace, cm.Name, err)
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	} else if err == nil {
 		Logf("[DELETE]", "Deleted ConfigMap: %s/%s", cm.Namespace, cm.Name)
 	}

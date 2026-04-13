@@ -9,7 +9,7 @@ linters:
         - fmt.Fprintln
   exclusions:
     rules:
-      # Ginkgo/Gomega convention: dot-import for matchers in large replication E2E helpers.
+      # staticcheck ST1001: Gomega dot-import in replication E2E helpers.
       - path: test/e2e/replication/helpers\.go
         text: "ST1001"
         linters:

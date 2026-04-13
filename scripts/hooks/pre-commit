@@ -72,18 +72,9 @@ fi
 
 # ============================================================================
 # YAMLLINT - Check if available first, then process YAML files
-# Prefer: yamllint on PATH; else python3 -m yamllint (pip install --user yamllint)
 # ============================================================================
-YAMLLINT_CMD=()
 if command -v yamllint &>/dev/null; then
-	YAMLLINT_CMD=(yamllint)
 	TOOLS_AVAILABLE=1
-elif python3 -c 'import yamllint' 2>/dev/null; then
-	YAMLLINT_CMD=(python3 -m yamllint)
-	TOOLS_AVAILABLE=1
-fi
-
-if [ "${#YAMLLINT_CMD[@]}" -gt 0 ]; then
 	YAML_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(yaml|yml)$' || true)
 
 	if [ -n "$YAML_FILES" ]; then
@@ -98,7 +89,7 @@ if [ "${#YAMLLINT_CMD[@]}" -gt 0 ]; then
 		for file in $YAML_FILES; do
 			if [ -f "$REPO_ROOT/$file" ]; then
 				echo -n "  Checking $file... "
-				if "${YAMLLINT_CMD[@]}" -c "$REPO_ROOT/.yamllint.yaml" "$REPO_ROOT/$file" >/dev/null 2>&1; then
+				if yamllint -c "$REPO_ROOT/.yamllint.yaml" "$REPO_ROOT/$file" >/dev/null 2>&1; then
 					echo -e "${GREEN}Pass${NC}"
 					((YAML_PASSED++))
 					PASSED_FILES+=("$file")
@@ -106,18 +97,19 @@ if [ "${#YAMLLINT_CMD[@]}" -gt 0 ]; then
 					echo -e "${RED}FAILED${NC}"
 					((YAML_FAILED++))
 					FAILED_FILES+=("$file")
-					"${YAMLLINT_CMD[@]}" -c "$REPO_ROOT/.yamllint.yaml" "$REPO_ROOT/$file" || true
+					# Show the actual errors
+					yamllint -c "$REPO_ROOT/.yamllint.yaml" "$REPO_ROOT/$file" || true
 				fi
 			fi
 		done
 
 		echo "Yamllint: ${YAML_PASSED} passed, ${YAML_FAILED} failed"
 	else
-		echo "No staged .yaml/.yml files (yamllint skipped for this commit)."
+		echo "No YAML files to check with yamllint"
 	fi
 else
-	echo -e "${YELLOW}WARNING: yamllint is not available. Skipping YAML linting.${NC}"
-	echo "  Install: apt-get install yamllint  OR  pip install --user yamllint"
+	echo -e "${YELLOW}WARNING: yamllint is not installed. Skipping YAML linting.${NC}"
+	echo "  Install with: pip install yamllint (or apt-get install yamllint)"
 fi
 
 # ============================================================================
@@ -195,23 +187,9 @@ else
 fi
 
 # ============================================================================
-# MARKDOWNLINT - Check markdown formatting (MARKDOWN in super-linter)
-# Prefer: markdownlint on PATH; else npx markdownlint-cli (npm install -g markdownlint-cli)
+# MARKDOWNLINT - Check markdown formatting
 # ============================================================================
-MARKDOWNLINT_CONFIG="$REPO_ROOT/.markdownlint.yaml"
-MDLINT_CMD=()
 if command -v markdownlint &>/dev/null; then
-	MDLINT_CMD=(markdownlint)
-	TOOLS_AVAILABLE=1
-elif command -v npx &>/dev/null; then
-	MDLINT_CMD=(npx --yes markdownlint-cli)
-	TOOLS_AVAILABLE=1
-fi
-if [ -f "$MARKDOWNLINT_CONFIG" ] && [ "${#MDLINT_CMD[@]}" -gt 0 ]; then
-	MDLINT_CMD+=(-c "$MARKDOWNLINT_CONFIG")
-fi
-
-if [ "${#MDLINT_CMD[@]}" -gt 0 ]; then
 	MD_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.md$' || true)
 
 	if [ -n "$MD_FILES" ]; then
@@ -223,10 +201,16 @@ if [ "${#MDLINT_CMD[@]}" -gt 0 ]; then
 		MD_PASSED=0
 		MD_FAILED=0
 
+		MARKDOWNLINT_CONFIG="$REPO_ROOT/.markdownlint.yaml"
+		MDLINT=(markdownlint)
+		if [ -f "$MARKDOWNLINT_CONFIG" ]; then
+			MDLINT=(markdownlint -c "$MARKDOWNLINT_CONFIG")
+		fi
+
 		for file in $MD_FILES; do
 			if [ -f "$REPO_ROOT/$file" ]; then
 				echo -n "  Checking $file... "
-				if "${MDLINT_CMD[@]}" "$REPO_ROOT/$file" >/dev/null 2>&1; then
+				if "${MDLINT[@]}" "$REPO_ROOT/$file" >/dev/null 2>&1; then
 					echo -e "${GREEN}Pass${NC}"
 					((MD_PASSED++))
 					PASSED_FILES+=("$file")
@@ -234,18 +218,17 @@ if [ "${#MDLINT_CMD[@]}" -gt 0 ]; then
 					echo -e "${RED}FAILED${NC}"
 					((MD_FAILED++))
 					FAILED_FILES+=("$file")
-					"${MDLINT_CMD[@]}" "$REPO_ROOT/$file" || true
+					# Show the actual errors
+					"${MDLINT[@]}" "$REPO_ROOT/$file" || true
 				fi
 			fi
 		done
 
 		echo "Markdownlint: ${MD_PASSED} passed, ${MD_FAILED} failed"
-	else
-		echo "No staged .md files (markdownlint skipped for this commit)."
 	fi
 else
-	echo -e "${YELLOW}WARNING: markdownlint is not available. Skipping Markdown rule linting.${NC}"
-	echo "  Install: npm install -g markdownlint-cli  OR  apt install node-markdownlint (provides markdownlint on PATH)"
+	echo -e "${YELLOW}TIP: markdownlint not installed. Skipping markdown linting.${NC}"
+	echo "     Install with: apt-get install node-markdownlint (or npm install -g markdownlint)"
 fi
 
 # ============================================================================
@@ -254,11 +237,6 @@ fi
 if command -v npx &>/dev/null; then
 	TOOLS_AVAILABLE=1
 	MD_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.md$' || true)
-
-	PRETTIER_IGNORE=()
-	if [ -f "$REPO_ROOT/.prettierignore" ]; then
-		PRETTIER_IGNORE=(--ignore-path "$REPO_ROOT/.prettierignore")
-	fi
 
 	if [ -n "$MD_FILES" ]; then
 		echo ""
@@ -272,25 +250,23 @@ if command -v npx &>/dev/null; then
 		for file in $MD_FILES; do
 			if [ -f "$REPO_ROOT/$file" ]; then
 				echo -n "  Checking $file... "
-				if npx --yes prettier@3.5.3 --check "${PRETTIER_IGNORE[@]}" "$REPO_ROOT/$file" >/dev/null 2>&1; then
+				if npx --yes prettier@3.5.3 --check "$REPO_ROOT/$file" >/dev/null 2>&1; then
 					echo -e "${GREEN}Pass${NC}"
 					((PRETTIER_PASSED++))
 				else
 					echo -e "${RED}FAILED${NC}"
 					((PRETTIER_FAILED++))
 					FAILED_FILES+=("$file (prettier)")
-					npx --yes prettier@3.5.3 --check "${PRETTIER_IGNORE[@]}" "$REPO_ROOT/$file" || true
+					npx --yes prettier@3.5.3 --check "$REPO_ROOT/$file" || true
 				fi
 			fi
 		done
 
 		echo "Prettier: ${PRETTIER_PASSED} passed, ${PRETTIER_FAILED} failed"
-	else
-		echo "No staged .md files (Prettier skipped for this commit)."
 	fi
 else
-	echo -e "${YELLOW}WARNING: npx not available. Skipping Prettier Markdown checks.${NC}"
-	echo "  Install Node.js (npx) for MARKDOWN_PRETTIER parity with CI."
+	echo -e "${YELLOW}TIP: npx not available. Skipping Prettier Markdown checks.${NC}"
+	echo "     Install Node.js so npx can run prettier@3.5.3 (MARKDOWN_PRETTIER in CI)."
 fi
 
 # ============================================================================
@@ -303,11 +279,9 @@ echo "  Passed: ${#PASSED_FILES[@]}"
 echo "  Failed: ${#FAILED_FILES[@]}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-if [ "$TOOLS_AVAILABLE" -eq 0 ]; then
-	echo -e "${YELLOW}WARNING: No linting tools found on PATH.${NC}"
-	echo "  For CI parity install: shellcheck, yamllint (or: pip install --user yamllint), markdownlint-cli (global or via npx), Node.js (npx) for Prettier."
-	echo "  See docs/development/git-hooks.md"
-	echo "  Allowing commit to proceed without validation."
+if [ $TOOLS_AVAILABLE -eq 0 ]; then
+	echo -e "${YELLOW}WARNING: No linting tools found (install shellcheck, yamllint, and/or Node.js for npx/Prettier).${NC}"
+	echo "  Allowing commit to proceed without validation"
 	exit 0
 fi
 

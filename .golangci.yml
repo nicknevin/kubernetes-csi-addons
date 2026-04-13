@@ -7,3 +7,10 @@ linters:
       exclude-functions:
         # only called from the csi-addons tool
         - fmt.Fprintln
+  exclusions:
+    rules:
+      # Ginkgo/Gomega convention: dot-import for matchers in large replication E2E helpers.
+      - path: test/e2e/replication/helpers\.go
+        text: "ST1001"
+        linters:
+          - staticcheck

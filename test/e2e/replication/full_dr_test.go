@@ -53,7 +53,7 @@ var _ = Describe("Full DR (two clusters)", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, cDR1, env, nsName)
 			By("Creating PVC and VR on DR1 only (primary)")
 			pvc := CreatePVC(ctx, cDR1, nsName, "pvc-dr1", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 
 			vrcName := "vrc-full-dr-" + nsName
@@ -72,7 +72,7 @@ var _ = Describe("Full DR (two clusters)", func() {
 
 			By("Waiting for Replicating=True or Completed=True on DR1")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vr, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 			err := cDR1.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrName}, vr)
 			Expect(err).NotTo(HaveOccurred())
@@ -82,7 +82,7 @@ var _ = Describe("Full DR (two clusters)", func() {
 			vrListDR2 := &replicationv1alpha1.VolumeReplicationList{}
 			err = cDR2.List(ctx, vrListDR2, client.InNamespace(nsName))
 			Expect(err).NotTo(HaveOccurred())
-			fmt.Fprintf(GinkgoWriter, "  [DR2] VR count in %s: %d\n", nsName, len(vrListDR2.Items))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2] VR count in %s: %d\n", nsName, len(vrListDR2.Items))
 		})
 	})
 })

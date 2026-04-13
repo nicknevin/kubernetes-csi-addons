@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega" //nolint:ST1001 // dot-import is standard for Gomega matchers in Ginkgo tests
+	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1188,24 +1188,8 @@ func filterEndpointIPsToCIDRs(ips []string, nodeIPs map[string]struct{}) []strin
 	return out
 }
 
-func cidrsFromEndpointsObject(ctx context.Context, c client.Client, key client.ObjectKey) []string {
-	ep := &corev1.Endpoints{} //nolint:SA1019 // v1 Endpoints still used alongside EndpointSlice for older clusters / Services
-	if err := c.Get(ctx, key, ep); err != nil {
-		Logf("[DEBUG]", "cidrsFromEndpointsObject: get Endpoints %s: %v", key, err)
-		return nil
-	}
-	var ips []string
-	for _, sub := range ep.Subsets {
-		for _, a := range sub.Addresses {
-			if a.IP != "" {
-				ips = append(ips, a.IP)
-			}
-		}
-	}
-	return ips
-}
-
-// collectServiceBackendIPs merges addresses from v1 Endpoints and EndpointSlices labeled for the Service.
+// collectServiceBackendIPs collects backend IPs from EndpointSlices labeled for the Service.
+// (v1 Endpoints is deprecated in Kubernetes 1.33+; EndpointSlice has been available since 1.21.)
 func collectServiceBackendIPs(ctx context.Context, c client.Client, key client.ObjectKey) []string {
 	seen := make(map[string]struct{})
 	var ips []string
@@ -1218,9 +1202,6 @@ func collectServiceBackendIPs(ctx context.Context, c client.Client, key client.O
 		}
 		seen[ip] = struct{}{}
 		ips = append(ips, ip)
-	}
-	for _, ip := range cidrsFromEndpointsObject(ctx, c, key) {
-		add(ip)
 	}
 	sliceList := &discoveryv1.EndpointSliceList{}
 	listOpts := []client.ListOption{

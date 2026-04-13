@@ -81,7 +81,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-rsync", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-rsync-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -89,18 +89,18 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("L1-RSYNC-001: Validating primary replication state")
 			_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-			fmt.Fprintf(GinkgoWriter, "  [DR1][INFO] Primary: %s\n", FormatVRStatus(vrDR1))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][INFO] Primary: %s\n", FormatVRStatus(vrDR1))
 			Expect(vrDR1.Status.State).To(Equal(replicationv1alpha1.PrimaryState), "Primary should be in Primary state")
 			Expect(hasReplicationSuccessCondition(vrDR1)).To(BeTrue(), "Primary should have success condition")
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-rsync", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-rsync", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
@@ -114,12 +114,12 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("L1-RSYNC-001: Validating secondary replication state (pre-fence)")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] Secondary (pre-fence): %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] Secondary (pre-fence): %s\n", FormatVRStatus(vrDR2))
 			Expect(vrDR2.Status.State).To(Equal(replicationv1alpha1.SecondaryState), "Secondary should be in Secondary state")
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(), "Secondary should have success condition")
 
@@ -145,7 +145,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			if !IsNetworkFenceSupportAvailable() {
 				By("L1-RSYNC-001: NetworkFence not supported, simulating split-brain via demotion")
 				_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-				fmt.Fprintf(GinkgoWriter, "  [NOTE] NetworkFence not available; skipping network isolation. Resync will proceed on healthy secondary.\n")
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [NOTE] NetworkFence not available; skipping network isolation. Resync will proceed on healthy secondary.\n")
 			} else {
 				By("L1-RSYNC-001: NetworkFence supported, creating fence to simulate split-brain")
 				nfc, nf = CreateNetworkFenceAndWait(ctx, cDR2, nsName, env.Provisioner, secretName, secretNs)
@@ -154,7 +154,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 				By("L1-RSYNC-001: Validating secondary replication state via GetVolumeReplicationInfo (post-fence, degraded)")
 				Eventually(func() bool {
 					_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-					fmt.Fprintf(GinkgoWriter, "  [DR2][VR] post-fence: %s\n", FormatVRStatus(vrDR2))
+					_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] post-fence: %s\n", FormatVRStatus(vrDR2))
 					return HasVolumeReplicationErrorCondition(vrDR2)
 				}, 30*time.Second, 2*time.Second).Should(BeTrue(),
 					"Secondary should show error condition after network fence")
@@ -173,14 +173,14 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("Waiting for VR to complete resync (checking Completed condition)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync in progress: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync in progress: %s\n", FormatVRStatus(vrDR2))
 				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue(),
 				"VR Completed condition should be True and Resyncing=False after resync")
 
 			By("L1-RSYNC-001: Assertion — data consistency confirmed")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] Secondary (post-resync): %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] Secondary (post-resync): %s\n", FormatVRStatus(vrDR2))
 			Expect(hasVolumeReplicationCompletedCondition(vrDR2)).To(BeTrue(), "Should have Completed=True after resync")
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(), "Should have success condition")
 		})
@@ -204,7 +204,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-idem", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-idem-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -212,19 +212,19 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-idem", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-idem", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -242,7 +242,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("L1-RSYNC-002: Validating healthy state before first resync")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] pre-resync: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] pre-resync: %s\n", FormatVRStatus(vrDR2))
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(), "Should have success condition before resync")
 
 			By("L1-RSYNC-002: Triggering first resync on healthy secondary")
@@ -255,13 +255,13 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("Waiting for first resync to complete (checking Completed condition)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] first resync: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] first resync: %s\n", FormatVRStatus(vrDR2))
 				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-002: Assertion — data consistency after first resync")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-first-resync: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-first-resync: %s\n", FormatVRStatus(vrDR2))
 			Expect(hasVolumeReplicationCompletedCondition(vrDR2)).To(BeTrue(), "Should have Completed=True after first resync")
 
 			By("L1-RSYNC-002: Triggering second resync on already-synced secondary (idempotent)")
@@ -274,13 +274,13 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("Waiting for second resync to complete (checking Completed condition)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] second resync: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] second resync: %s\n", FormatVRStatus(vrDR2))
 				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-002: Assertion — data consistency after second resync")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-second-resync: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-second-resync: %s\n", FormatVRStatus(vrDR2))
 			Expect(hasVolumeReplicationCompletedCondition(vrDR2)).To(BeTrue(), "Should have Completed=True after second resync")
 		})
 	})
@@ -306,7 +306,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-fence", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-fence-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -314,19 +314,19 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-fence", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-fence", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			var nfc *csiaddonsv1alpha1.NetworkFenceClass
@@ -353,7 +353,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("L1-RSYNC-003: Validating secondary is fenced (split-brain state)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] fenced: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] fenced: %s\n", FormatVRStatus(vrDR2))
 				return HasVolumeReplicationErrorCondition(vrDR2)
 			}, 30*time.Second, 2*time.Second).Should(BeTrue(),
 				"Secondary should show error after fence applied")
@@ -371,13 +371,13 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("Waiting for resync to complete (checking Completed condition)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync: %s\n", FormatVRStatus(vrDR2))
 				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-003: Assertion — data consistency after resync")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-resync: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-resync: %s\n", FormatVRStatus(vrDR2))
 			Expect(hasVolumeReplicationCompletedCondition(vrDR2)).To(BeTrue(), "Should have Completed=True after resync")
 		})
 	})
@@ -400,7 +400,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-force", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-force-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -408,19 +408,19 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-force", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-force", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -446,13 +446,13 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("Waiting for resync to complete (checking Completed condition)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] force-resync: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] force-resync: %s\n", FormatVRStatus(vrDR2))
 				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-004: Assertion — data consistency after force resync")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-force-resync: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][INFO] post-force-resync: %s\n", FormatVRStatus(vrDR2))
 			Expect(hasVolumeReplicationCompletedCondition(vrDR2)).To(BeTrue(), "Should have Completed=True after force resync")
 		})
 	})
@@ -475,7 +475,7 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Creating primary PVC and VR on DR1")
 			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-err", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcName := "vrc-err-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
@@ -483,19 +483,19 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][VR] %s\n", FormatVRStatus(v))
 			})
 
 			By("Creating secondary PVC and VR on DR2")
 			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-err", func(p *corev1.PersistentVolumeClaim) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-err", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
 			DeferCleanup(func() {
@@ -521,14 +521,14 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			By("L1-RSYNC-005: Waiting for error condition or graceful handling")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				fmt.Fprintf(GinkgoWriter, "  [DR2][VR] error-handling: %s\n", FormatVRStatus(vrDR2))
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] error-handling: %s\n", FormatVRStatus(vrDR2))
 				return vrDR2.Status.State != "" || vrDR2.Status.Conditions != nil
 			}, 30*time.Second, 2*time.Second).Should(BeTrue(),
 				"Controller should update VR status even with invalid params")
 
 			By("L1-RSYNC-005: Assertion — Graceful error handling via GetVolumeReplicationInfo")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-			fmt.Fprintf(GinkgoWriter, "  [DR2][VR] final state after error test: %s\n", FormatVRStatus(vrDR2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] final state after error test: %s\n", FormatVRStatus(vrDR2))
 			Expect(vrDR2.Status.State).ToNot(BeEmpty(),
 				"VR should maintain some state even after error attempt")
 		})

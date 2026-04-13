@@ -292,7 +292,7 @@ GitHub Actions runs **super-linter/slim@v7** (workflow: `.github/workflows/lint-
 
 | CI (super-linter) | What it is | Local equivalent in `scripts/hooks/pre-commit` |
 | ----------------- | ----------- | ----------------------------------------------- |
-| **MARKDOWN** | [markdownlint](https://github.com/DavidAnson/markdownlint) rules on `*.md` | `markdownlint -c .markdownlint.yaml <file>` (same rules as super-linter v7 template) on each **staged** `.md` file |
+| **MARKDOWN** | [markdownlint](https://github.com/DavidAnson/markdownlint) rules on `*.md` | `markdownlint <file>` on each **staged** `.md` file |
 | **MARKDOWN_PRETTIER** | [Prettier](https://prettier.io/) check on `*.md` | `npx prettier@3.5.3 --check <file>` on each staged `.md` file (same major as the image used in CI) |
 | **NATURAL_LANGUAGE** | textlint terminology rules | **Not** run in the hook; **CI only** unless you run textlint or super-linter yourself |
 

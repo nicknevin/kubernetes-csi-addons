@@ -5,7 +5,6 @@ This repository uses Git pre-commit hooks to catch linting issues locally before
 ## Setup
 
 ### Automatic Setup (Recommended)
-
 After cloning the repository, run:
 
 ```bash
@@ -15,7 +14,6 @@ After cloning the repository, run:
 This will install all pre-commit hooks to `.Git/hooks/` and make them executable.
 
 ### Manual Setup
-
 If you prefer to set up manually:
 
 ```bash
@@ -26,25 +24,19 @@ chmod +x .Git/hooks/*
 ## Available Hooks
 
 ### pre-commit
-
-Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, **markdownlint**, and **Prettier** (`prettier@3.5.3` for Markdown, matching the GitHub Actions super-linter **MARKDOWN_PRETTIER** check) on staged files before allowing a commit.
+Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, and **markdownlint** on all staged files before allowing a commit.
 
 **What it does:**
-
 - Checks all modified/staged shell scripts (`.sh`) with shellcheck
 - Checks all modified/staged shell scripts syntax with bash -n (BASH_EXEC)
 - Checks all modified/staged shell scripts formatting with shfmt (SHELL_SHFMT)
 - Checks all modified/staged YAML files (`.yaml`, `.yml`) with yamllint
-- Checks all modified/staged Markdown files (`.md`) with markdownlint
-- Checks all modified/staged Markdown files with Prettier (`npx prettier@3.5.3 --check`, same as CI **MARKDOWN_PRETTIER**)
+- Checks all modified/staged markdown files (`.md`) with markdownlint
 - Prevents commits if any linting errors are found
 - Shows detailed error messages to help you fix issues
 - Only checks for linting tools if files of that type are present
 
-**CI parity:** The workflow [lint-extras.yaml](../../.github/workflows/lint-extras.yaml) also runs **NATURAL_LANGUAGE** (textlint terminology) on Markdown; that check is not bundled in the hook. To match CI exactly locally, run the super-linter container with the same `FILTER_REGEX_EXCLUDE` and `VALIDATE_*` settings as that workflow.
-
 **Example output:**
-
 ```plaintext
 Running pre-commit linting checks...
 
@@ -69,7 +61,6 @@ All files passed linting!
 ```
 
 **Example when there are errors:**
-
 ```plaintext
 Running pre-commit linting checks...
 
@@ -106,7 +97,6 @@ Git commit --no-verify
 **Important**: The CI pipeline will still run the same checks and **fail if linting issues exist**. This should only be used as a temporary measure while you work on fixes.
 
 **Example:**
-
 ```bash
 Git add .
 Git commit --no-verify -m "WIP: fixing linting issues"
@@ -119,26 +109,22 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 ## Requirements
 
 ### Required Tools
-
 - `Git` - Version control
 - `shellcheck` - Shell script linting
 - `yamllint` - YAML file linting
 
 ### Optional Tools (Recommended for Full Validation)
-
 - `shfmt` - Shell script formatting checker
 - `bash` - Shell syntax validator (usually pre-installed)
 - `markdownlint` - Markdown file linting
 
 ### Installing shellcheck
-
 - **macOS**: `brew install shellcheck`
 - **Ubuntu/Debian**: `apt-get install shellcheck`
 - **Fedora/RHEL**: `dnf install ShellCheck`
 - **Other**: See [shellcheck on GitHub](https://github.com/koalaman/shellcheck)
 
 ### Installing yamllint
-
 - **macOS**: `brew install yamllint`
 - **Ubuntu/Debian**: `apt-get install yamllint`
 - **Fedora/RHEL**: `dnf install yamllint`
@@ -146,14 +132,12 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 - **Other**: See [yamllint on GitHub](https://github.com/adrienverge/yamllint)
 
 ### Installing shfmt (Recommended)
-
 - **macOS**: `brew install shfmt`
 - **Ubuntu/Debian**: `apt-get install shfmt`
 - **Fedora/RHEL**: `dnf install shfmt`
 - **Go**: `go install mvdan.cc/sh/v3/cmd/shfmt@latest`
 
 ### Installing markdownlint (Recommended)
-
 - **Node.js**: `npm install -g markdownlint`
 - **Ubuntu/Debian**: May be available as `node-markdownlint`
 - **Python**: `pip install markdownlint` (or `mdl`)
@@ -202,7 +186,6 @@ Git commit -m "Continue working"
 ```
 
 **Verify the hook status:**
-
 ```bash
 # Check if hook is executable (enabled)
 ls -la .Git/hooks/pre-commit
@@ -234,12 +217,11 @@ Git commit --no-verify -m "Commit message"
 ```
 
 **When to use each option:**
-
-| Scenario                      | Method        | Command                          |
-| ----------------------------- | ------------- | -------------------------------- |
-| Single commit to bypass       | `--no-verify` | `Git commit --no-verify`         |
-| Multiple commits (dev branch) | Disable hook  | `chmod -x .Git/hooks/pre-commit` |
-| Completely remove hook        | Uninstall     | `rm .Git/hooks/pre-commit`       |
+| Scenario | Method | Command |
+|----------|--------|---------|
+| Single commit to bypass | `--no-verify` | `Git commit --no-verify` |
+| Multiple commits (dev branch) | Disable hook | `chmod -x .Git/hooks/pre-commit` |
+| Completely remove hook | Uninstall | `rm .Git/hooks/pre-commit` |
 
 ## Re-enabling Hooks
 
@@ -261,28 +243,22 @@ If you disabled the hook, run the setup script again to re-enable it.
 ## Troubleshooting
 
 ### "shellcheck: command not found"
-
 The hook warned about this but allowed the commit. Install shellcheck (see Requirements section).
 
 ### Hook not running
-
 Verify it's executable:
-
 ```bash
 ls -la .Git/hooks/pre-commit
 # Should show: -rwxr-xr-x (executable)
 ```
 
 If not executable, run:
-
 ```bash
 ./scripts/setup-hooks.sh
 ```
 
 ### Commit blocked by hook, but I don't see the error
-
 The error output may have been cut off. Run shellcheck manually:
-
 ```bash
 shellcheck <your-file>.sh
 ```
@@ -290,7 +266,6 @@ shellcheck <your-file>.sh
 ## CI Pipeline
 
 The same linting checks run in the GitHub Actions CI pipeline:
-
 - Workflow: `.github/workflows/lint-extras.yaml`
 - Check: "Lint codebase" (uses super-linter/slim@v7)
 
@@ -299,7 +274,6 @@ The same linting checks run in the GitHub Actions CI pipeline:
 ## Contributing
 
 When adding new shell scripts:
-
 1. Make sure they follow bash best practices
 2. Run shellcheck before committing
 3. The pre-commit hook will catch issues automatically

@@ -101,7 +101,8 @@ test_image_in_cluster() {
     local context="$1"
     local image="$2"
     
-    local test_pod="test-img-$(date +%s)"
+    local test_pod
+    test_pod="test-img-$(date +%s)"
     local clean_image="${image#localhost/}"
     
     log_info "Testing image accessibility in cluster: $context"
@@ -138,14 +139,17 @@ load_image_via_pod() {
     fi
     
     local clean_image="${image#localhost/}"
-    local config_map_name="iptables-image-data-$(date +%s)"
-    local job_name="iptables-image-loader-$(date +%s)"
+    local config_map_name
+    config_map_name="iptables-image-data-$(date +%s)"
+    local job_name
+    job_name="iptables-image-loader-$(date +%s)"
     
     # Base64 encode the tar file for ConfigMap
     log_info "Encoding image tar for ConfigMap..."
     local encoded_data
     encoded_data=$(base64 -w 0 < "$tar_file")
-    local encoded_size=$(echo -n "$encoded_data" | wc -c)
+    local encoded_size
+    encoded_size=$(echo -n "$encoded_data" | wc -c)
     log_info "Encoded size: $(( encoded_size / 1024 / 1024 ))MB"
     
     # Create ConfigMap with encoded image
@@ -375,7 +379,8 @@ verify_image_in_cluster() {
     log_info "Found $node_count nodes in cluster: $context"
     
     # Try to create a test pod
-    local test_pod="verify-$(date +%s)"
+    local test_pod
+    test_pod="verify-$(date +%s)"
     local clean_image="${image#localhost/}"
     
     if kubectl --context="$context" run "$test_pod" \

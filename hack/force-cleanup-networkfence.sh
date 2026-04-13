@@ -67,7 +67,8 @@ main() {
 		echo "  Processing NetworkFence: $nf"
 		
 		# Get CIDR info for diagnostics
-		local cidrs=$(kubectl_ctx get networkfence "$nf" -o jsonpath='{.spec.cidrs}' 2>/dev/null || echo "unknown")
+		local cidrs
+		cidrs=$(kubectl_ctx get networkfence "$nf" -o jsonpath='{.spec.cidrs}' 2>/dev/null || echo "unknown")
 		echo "    CIDRs: $cidrs"
 		
 		# Step 1: Remove finalizers
@@ -123,14 +124,16 @@ main() {
 	# Final verification
 	echo
 	log_info "Final verification:"
-	local remaining=$(kubectl_ctx get networkfence -o jsonpath='{.items | length}' 2>/dev/null || echo "0")
+	local remaining
+	remaining=$(kubectl_ctx get networkfence -o jsonpath='{.items | length}' 2>/dev/null || echo "0")
 	if [[ "$remaining" -eq 0 ]]; then
 		log_success "✓ All NetworkFences cleaned up!"
 	else
 		log_warn "⚠ $remaining NetworkFences still present"
 	fi
 	
-	local remaining_nfc=$(kubectl_ctx get networkfenceclass -o jsonpath='{.items | length}' 2>/dev/null || echo "0")
+	local remaining_nfc
+	remaining_nfc=$(kubectl_ctx get networkfenceclass -o jsonpath='{.items | length}' 2>/dev/null || echo "0")
 	if [[ "$remaining_nfc" -eq 0 ]]; then
 		log_success "✓ All NetworkFenceClasses cleaned up!"
 	else

@@ -11,6 +11,7 @@ echo "Test 1: Simulating environment without kind/k3d"
 PATH_BACKUP="$PATH"
 export PATH="/usr/bin:/bin"  # Remove kind/k3d from path
 
+# shellcheck disable=SC2034  # IPTABLES_IMAGE is a reference/example for the logic being tested
 IPTABLES_IMAGE="csi-addons/iptables-manager:latest"
 if command -v kind >/dev/null 2>&1 || command -v k3d >/dev/null 2>&1; then
     echo "✓ Should use custom image (kind/k3d available)"

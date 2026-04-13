@@ -19,6 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034  # REPO_ROOT may be used in future or for debugging
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DRY_RUN=false
 CONTEXTS=()
@@ -120,14 +121,16 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 			if kubectl_ctx "$CURRENT_CTX" get crd volumereplications.replication.storage.openshift.io &>/dev/null; then
 				for n in $(kubectl_ctx "$CURRENT_CTX" get vr -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
 					remove_vr_finalizer "$CURRENT_CTX" "$ns" "$n"
-					[[ "$DRY_RUN" != "true" ]] && kubectl_ctx "$CURRENT_CTX" delete vr -n "$ns" "$n" --ignore-not-found --timeout=15s 2>/dev/null || true
+					# shellcheck disable=SC2015  # Safe because || true always succeeds
+					[[ "$DRY_RUN" != "true" ]] && { kubectl_ctx "$CURRENT_CTX" delete vr -n "$ns" "$n" --ignore-not-found --timeout=15s 2>/dev/null; } || true
 				done
 			fi
 
 			# PVCs: remove finalizers then delete
 			for pvc in $(kubectl_ctx "$CURRENT_CTX" get pvc -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
 				remove_pvc_finalizer "$CURRENT_CTX" "$ns" "$pvc"
-				[[ "$DRY_RUN" != "true" ]] && kubectl_ctx "$CURRENT_CTX" delete pvc -n "$ns" "$pvc" --ignore-not-found --timeout=15s 2>/dev/null || true
+				# shellcheck disable=SC2015  # Safe because || true always succeeds
+				[[ "$DRY_RUN" != "true" ]] && { kubectl_ctx "$CURRENT_CTX" delete pvc -n "$ns" "$pvc" --ignore-not-found --timeout=15s 2>/dev/null; } || true
 			done
 
 			# VolumeSnapshots (if CRD exists)
@@ -199,7 +202,8 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 	# Check if NetworkFence has invalid CIDR data
 	has_invalid_cidr() {
 		local name="$1"
-		local cidrs=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.spec.cidrs[0]}' 2>/dev/null || echo "")
+		local cidrs
+		cidrs=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.spec.cidrs[0]}' 2>/dev/null || echo "")
 		# Check for common invalid CIDR patterns
 		if [[ "$cidrs" == "not-a-valid-cidr" ]] || [[ "$cidrs" == "" ]] || [[ "$cidrs" == "null" ]]; then
 			return 0  # Has invalid CIDR
@@ -214,7 +218,8 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 		local timeout=30
 		local waited=0
 		while [[ $waited -lt $timeout ]]; do
-			local result=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.status.result}' 2>/dev/null || echo "")
+			local result
+			result=$(kubectl_ctx "$CURRENT_CTX" get networkfence "$name" -o jsonpath='{.status.result}' 2>/dev/null || echo "")
 			if [[ "$result" == "Succeeded" ]]; then
 				return 0
 			elif [[ "$result" == "Failed" ]]; then

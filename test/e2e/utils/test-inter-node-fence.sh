@@ -134,7 +134,8 @@ main() {
     
     # Deploy DaemonSet
     log_info "Deploying iptables DaemonSet to $SOURCE_CONTEXT..."
-    local template_file="$(dirname "$0")/../helpers/templates/iptables-daemonset.yaml"
+    local template_file
+    template_file="$(dirname "$0")/../helpers/templates/iptables-daemonset.yaml"
     local rendered_template="/tmp/iptables-daemonset-inter-node.yaml"
     
     sed -e "s|{{ \.Namespace }}|$TEST_NAMESPACE|g" \

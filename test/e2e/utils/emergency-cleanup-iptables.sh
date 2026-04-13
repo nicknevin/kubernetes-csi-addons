@@ -184,7 +184,7 @@ main() {
         exit 0
     fi
     
-    log_info "Found namespaces: $(echo $namespaces | tr '\n' ' ')"
+    log_info "Found namespaces: $(echo "$namespaces" | tr '\n' ' ')"
     
     # Clean up each namespace
     for ns in $namespaces; do

@@ -45,7 +45,8 @@ cleanup_context() {
     kubectl --context="$context" delete configmap -n kube-system -l 'configmap-type=iptables-image' --ignore-not-found=true 2>/dev/null
     
     # Also delete any ConfigMaps that start with iptables-image-tar
-    local cms=$(kubectl --context="$context" get configmap -n kube-system -o jsonpath='{.items[?(@.metadata.name=~"^iptables-image-tar")].metadata.name}' 2>/dev/null || true)
+    local cms
+    cms=$(kubectl --context="$context" get configmap -n kube-system -o jsonpath='{.items[?(@.metadata.name=~"^iptables-image-tar")].metadata.name}' 2>/dev/null || true)
     if [[ -n "$cms" ]]; then
         log_info "Found old ConfigMaps: $cms"
         echo "$cms" | xargs -I {} kubectl --context="$context" delete configmap {} -n kube-system 2>/dev/null

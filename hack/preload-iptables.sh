@@ -7,6 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034  # WORKSPACE_ROOT may be used in future or for debugging
 WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
@@ -78,7 +79,8 @@ save_image_to_tar() {
   echo -n "[INFO] Saving image to tar file: "
   $runtime save "$image" -o "$tar_file" 2>&1 | tail -1
   
-  local size=$(du -h "$tar_file" | cut -f1)
+  local size
+  size=$(du -h "$tar_file" | cut -f1)
   log_success "Image saved to tar: $tar_file ($size)"
 }
 

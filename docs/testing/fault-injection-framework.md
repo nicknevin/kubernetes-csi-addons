@@ -1,10 +1,10 @@
 # Fault Injection Framework
 
-This document describes the network fault injection framework implemented for E2E testing in the CSI-Addons project. The framework provides a vendor-agnostic approach to network fencing with multiple backend providers.
+This document describes the network fault injection framework implemented for end-to-end testing in the CSI-Addons project. The framework provides a vendor-agnostic approach to network fencing with multiple backend providers.
 
 ## Overview
 
-The fault injection framework allows E2E tests to simulate network failures by blocking IP addresses or CIDR ranges. This is crucial for testing disaster recovery scenarios and replication behavior under network partition conditions.
+The fault injection framework allows end-to-end tests to simulate network failures by blocking IP addresses or CIDR ranges. This is crucial for testing disaster recovery scenarios and replication behavior under network partition conditions.
 
 ## Architecture
 
@@ -18,19 +18,19 @@ The core interface that all fault injection backends must implement:
 type PeerFenceProvider interface {
     // FenceIP blocks network access to the specified CIDR
     FenceIP(ctx context.Context, targetCIDR string, params map[string]string) error
-    
+
     // UnfenceIP restores network access to the specified CIDR
     UnfenceIP(ctx context.Context, targetCIDR string, params map[string]string) error
-    
+
     // VerifyConnectivity tests connectivity to the target and verifies the expected state
     VerifyConnectivity(ctx context.Context, targetCIDR string, expectedFenced bool) (bool, error)
-    
+
     // IsSupported returns true if this fault injection mechanism is available in the cluster
     IsSupported(ctx context.Context) bool
-    
+
     // GetProviderType returns the type of this provider
     GetProviderType() FaultInjectorType
-    
+
     // Cleanup removes all resources created by this provider
     Cleanup(ctx context.Context) error
 }
@@ -39,17 +39,20 @@ type PeerFenceProvider interface {
 ### 2. Provider Implementations
 
 #### IptablesFaultProvider
+
 - Uses privileged DaemonSets with NET_ADMIN capabilities
 - Creates iptables rules to block traffic to specific CIDRs
 - Manages rules via ConfigMaps that are mounted and monitored by DaemonSet pods
 - Requires cluster support for privileged containers
 
-#### NetworkFenceFaultProvider  
+#### NetworkFenceFaultProvider
+
 - Uses the existing NetworkFence CRDs (NetworkFence, NetworkFenceClass)
 - Integrates with CSIAddonsNode capabilities detection
 - Provides backward compatibility with existing NetworkFence functionality
 
 #### NoOpFaultProvider
+
 - Default fallback provider when no specific backend is configured
 - Always reports success but performs no actual operations
 - Useful for testing the framework itself or when fault injection is not needed
@@ -57,6 +60,7 @@ type PeerFenceProvider interface {
 ### 3. Factory Function
 
 The `NewFaultInjectionProvider()` function creates the appropriate provider based on:
+
 - Environment variable `E2E_FAULT_INJECTOR` (iptables|networkfence|none)
 - Cluster capabilities (privileged DaemonSets, NetworkFence support)
 - Automatic fallback to NoOp provider if specified backend is unsupported
@@ -80,7 +84,7 @@ The `NewFaultInjectionProvider()` function creates the appropriate provider base
 ### Basic Setup
 
 ```go
-import "github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
+import "github.com/csi-addons/kubernetes-csi-addons/test/end-to-end/helpers"
 
 // Create provider
 config := helpers.FaultInjectionConfig{
@@ -143,11 +147,13 @@ var _ = AfterSuite(func() {
 The framework automatically detects cluster capabilities:
 
 ### For Iptables Provider
+
 - Tests ability to create privileged DaemonSets with NET_ADMIN capabilities
 - Verifies security policies allow privileged containers
 - Checks for required node operating system support
 
-### For NetworkFence Provider  
+### For NetworkFence Provider
+
 - Examines CSIAddonsNode resources for NetworkFence capability
 - Validates NetworkFence CRDs are installed
 - Confirms CSI-Addons controller is available
@@ -157,12 +163,14 @@ The framework automatically detects cluster capabilities:
 ### Iptables Provider Technical Details
 
 1. **DaemonSet Creation**: Creates a privileged DaemonSet with:
+
    - `NET_ADMIN` capability for iptables manipulation
    - Host network access
    - Tolerations for all node taints
    - ConfigMap volume mount for rule management
 
 2. **Rule Management**: Uses ConfigMaps containing shell scripts that:
+
    - Add/remove iptables rules for OUTPUT chain
    - Use `REJECT --reject-with icmp-host-unreachable` for clean failures
    - Include safety checks (`-C` before `-I`) to avoid duplicate rules
@@ -189,24 +197,26 @@ The framework includes comprehensive integration tests covering:
 
 ```bash
 # Use iptables provider (requires privileged containers)
-E2E_FAULT_INJECTOR=iptables go test ./test/e2e/replication/
+E2E_FAULT_INJECTOR=iptables go test ./test/end-to-end/replication/
 
 # Use NetworkFence provider (requires CSI-Addons controller)
-E2E_FAULT_INJECTOR=networkfence go test ./test/e2e/replication/
+E2E_FAULT_INJECTOR=networkfence go test ./test/end-to-end/replication/
 
 # Use NoOp provider (no actual fault injection)
-E2E_FAULT_INJECTOR=none go test ./test/e2e/replication/
+E2E_FAULT_INJECTOR=none go test ./test/end-to-end/replication/
 ```
 
 ## Security Considerations
 
 ### Iptables Provider
+
 - Requires privileged container capabilities
-- Uses NET_ADMIN for iptables rule manipulation  
+- Uses NET_ADMIN for iptables rule manipulation
 - Should only be used in test environments
 - DaemonSet pods have broad network access
 
 ### NetworkFence Provider
+
 - Uses standard RBAC permissions
 - Relies on CSI-Addons controller for actual implementation
 - More suitable for production-like testing environments
@@ -216,11 +226,13 @@ E2E_FAULT_INJECTOR=none go test ./test/e2e/replication/
 ### Common Issues
 
 1. **"Provider not supported"**
+
    - Check cluster security policies for privileged containers (iptables)
    - Verify CSI-Addons controller is running (networkfence)
    - Ensure correct environment variable configuration
 
 2. **"DaemonSet creation failed"**
+
    - Check RBAC permissions for test service account
    - Verify node selectors and tolerations
    - Review security context constraints (OpenShift)

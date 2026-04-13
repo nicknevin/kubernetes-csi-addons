@@ -41,7 +41,7 @@ func TestReplicationE2E(t *testing.T) {
 - `RegisterFailHandler(Fail)` tells Ginkgo to call `Fail()` when an assertion fails
 - `RunSpecs(t, description)` scans the package for registered `Describe` blocks and executes them
 
-**When called**: During `go test ./test/e2e/replication` or `make test-replication-e2e`
+**When called**: During `go test ./test/end-to-end/replication` or `make test-replication-end-to-end`
 
 ### 2.2 Init Functions (var = declarations)
 
@@ -221,7 +221,7 @@ Outer Describe          Inner Describe                    It block
 ### 4.1 Overall Suite Execution Timeline
 
 ```plaintext
-go test ./test/e2e/replication/...
+go test ./test/end-to-end/replication/...
         │
         ▼
 ┌─────────────────────────────────────┐
@@ -682,7 +682,7 @@ func DeleteVolumeReplicationWithCleanup(ctx context.Context, k8sClient client.Cl
 ### 6.1 Registration Phase (Init Time)
 
 ```plaintext
-go test ./test/e2e/replication
+go test ./test/end-to-end/replication
         ↓
 Go runtime loads package
         ↓
@@ -738,10 +738,10 @@ Test completes (Pass/Fail)
 
 ```go
 // Execute only specs matching "EnableVolumeReplication"
-make test-replication-e2e GINKGO_FOCUS="EnableVolumeReplication"
+make test-replication-end-to-end GINKGO_FOCUS="EnableVolumeReplication"
 
 // Execute only specs matching "L1-E-001"
-GINKGO_FOCUS="L1-E-001" ./hack/run-replication-e2e.sh
+GINKGO_FOCUS="L1-E-001" ./hack/run-replication-end-to-end.sh
 
 // In code, focus specific describe
 var _ = FDescribe("EnableVolumeReplication", func() {

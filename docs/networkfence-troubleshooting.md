@@ -12,13 +12,13 @@ This guide helps diagnose why NetworkFence operations may not work even when the
 
 ## Prerequisites Checklist
 
-| Requirement | How to Verify |
-|-------------|---------------|
-| CSI-Addons controller running | `kubectl get pods -A \| grep -i csi-addons` |
-| CSIAddonsNode CRs exist | `kubectl get csiaddonsnode -A` |
-| CSIAddonsNode in Connected state | `kubectl get csiaddonsnode -A -o wide` |
-| Driver advertises NETWORK_FENCE | Check CSIAddonsNode `status.capabilities` for `network_fence.NETWORK_FENCE` |
-| Lease exists for driver | `kubectl get lease -A \| grep -E '<driver>-csi-addons'` |
+| Requirement                         | How to Verify                                                                                                                                                                                |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSI-Addons controller running       | `kubectl get pods -A \| grep -i csi-addons`                                                                                                                                                  |
+| CSIAddonsNode CRs exist             | `kubectl get csiaddonsnode -A`                                                                                                                                                               |
+| CSIAddonsNode in Connected state    | `kubectl get csiaddonsnode -A -o wide`                                                                                                                                                       |
+| Driver advertises NETWORK_FENCE     | Check CSIAddonsNode `status.capabilities` for `network_fence.NETWORK_FENCE`                                                                                                                  |
+| Lease exists for driver             | `kubectl get lease -A \| grep -E '<driver>-csi-addons'`                                                                                                                                      |
 | NetworkFenceClass has secret params | `kubectl get networkfenceclass <name> -o yaml` → `spec.parameters` must include `csiaddons.openshift.io/networkfence-secret-name` and `csiaddons.openshift.io/networkfence-secret-namespace` |
 
 ## Diagnostic Commands
@@ -38,6 +38,7 @@ kubectl get csiaddonsnode -A -o yaml
 ```
 
 Look for:
+
 - `status.state: Connected` — connection to sidecar established
 - `status.capabilities` — must include `network_fence.NETWORK_FENCE` for fencing to work
 - `status.networkFenceClientStatus` — populated when NetworkFenceClass exists and driver supports `GET_CLIENTS_TO_FENCE`
@@ -71,6 +72,7 @@ kubectl logs -f deployment/csi-addons-controller -n <namespace> | grep -i networ
 ```
 
 Common log messages:
+
 - `"failed to get the networkfenceinstance"` — driver/connection/capability issue
 - `"leading CSIAddonsNode X for driver Y does not support NetworkFence"` — capability missing
 - `"no leader found for driver X"` — lease or connection pool issue
@@ -99,6 +101,7 @@ Common log messages:
 ### 4. NetworkFenceClass missing secret parameters
 
 **Cause:** NetworkFenceClass must have:
+
 - `csiaddons.openshift.io/networkfence-secret-name`
 - `csiaddons.openshift.io/networkfence-secret-namespace`
 

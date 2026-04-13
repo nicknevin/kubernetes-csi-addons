@@ -4,8 +4,8 @@ set -euo pipefail
 ipt_cmd=$(detect-iptables)
 
 if [ -z "$ipt_cmd" ]; then
-    echo "[$(date)] ERROR: No working iptables command found"
-    exit 1
+	echo "[$(date)] ERROR: No working iptables command found"
+	exit 1
 fi
 
 echo "[$(date)] Current fence rules using $ipt_cmd:"

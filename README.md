@@ -94,13 +94,13 @@ See [Testing Architecture](docs/testing-architecture.md) for a full overview. Su
 | -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Unit tests**             | Client replication API (enable/disable/promote/demote/resync), controller helpers, PVC annotations | Use fake gRPC clients; no real cluster or CSI driver.                                                                                                                                                            |
 | **Controller integration** | Replication Storage Suite, CSI-Addons Suite                                                        | Use [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest) (or real cluster with `USE_EXISTING_CLUSTER=true`). Controllers are exercised with **fake** clients—no real gRPC to sidecars.       |
-| **Replication end-to-end** | Layer-1 VR scenarios in `test/e2e/replication`                                                     | Create VolumeReplication/VolumeReplicationClass on a live cluster; require controller and CSI driver with replication support. See [Replication E2E suite](docs/testing/replication-e2e-suite.md). |
+| **Replication end-to-end** | Layer-1 VR scenarios in `test/end-to-end/replication`                                              | Create VolumeReplication/VolumeReplicationClass on a live cluster; require controller and CSI driver with replication support. See [Replication end-to-end Suite](docs/testing/replication-end-to-end-suite.md). |
 
 **Run tests:**
 
 - All tests (envtest, no cluster): `make test`
 - Replication controller + client against existing cluster (KUBECONFIG, CRDs): `make test-replication-cluster` or `./hack/run-ceph-replication-addon.sh`.
-- Replication end-to-end suite against existing cluster (controller + CSI driver required): `make test-replication-e2e` or `./hack/run-replication-e2e.sh`. Use `GINKGO_FOCUS` to run specific tests (e.g. `GINKGO_FOCUS="L1-E-001" ./hack/run-replication-e2e.sh`). See [Replication E2E suite](docs/testing/replication-e2e-suite.md).
+- Replication end-to-end suite against existing cluster (controller + CSI driver required): `make test-replication-end-to-end` or `./hack/run-replication-end-to-end.sh`. Use `GINKGO_FOCUS` to run specific tests (e.g. `GINKGO_FOCUS="L1-E-001" ./hack/run-replication-end-to-end.sh`). See [Replication end-to-end Suite](docs/testing/replication-end-to-end-suite.md).
 
 ## Contributing
 

@@ -13,7 +13,7 @@ When both `networkFenceClassName` and `driver` are specified `networkFenceClassN
 
 The `fenceState` field in the NetworkFence spec explicitly specifies the desired state for the CIDRs either
 `Fenced` or `Unfenced`. Setting `fenceState` to `Fenced` blocks access to the corresponding CIDR blocks, while
-setting it to `Unfenced` unblocks them.
+setting it to `Unfenced` unblocks them. Deletion of the CR no longer triggers UnfenceClusterNetwork; the controller removes the finalizer and skips reconciliation.
 
 The creation of NetworkFence CR will add a network fence. To unfence the CIDRs, update the `fenceState` field to `Unfenced`. Deletion of the CR no longer triggers UnfenceClusterNetwork; the controller removes the finalizer and skips reconciliation.
 
@@ -44,6 +44,8 @@ spec:
 > **Note**: Creation of a NetworkFence CR blocks access to the corresponding CIDR block. To unblock, set `spec.fenceState: Unfenced`.
 
 ## Unfence Operation
+
+> **Note**: Creation of a NetworkFence CR blocks access to the corresponding CIDR block. To unblock, set `spec.fenceState: Unfenced`.
 
 To unfence the CIDRs, update the `fenceState` field to `Unfenced`:
 

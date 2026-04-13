@@ -13,8 +13,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${1:-}"
 VR_NAME="${2:-}"
 CONTROLLER_NS="${CONTROLLER_NAMESPACE:-csi-addons-system}"

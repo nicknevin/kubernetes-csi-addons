@@ -20,9 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"net"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +28,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -71,15 +68,6 @@ const (
 	networkFenceSecretNsKey   = networkFenceParamPrefix + "networkfence-secret-namespace"
 	networkFencePollTimeout   = 120 * time.Second // for WaitForNetworkFenceResult
 	fenceCIDRProbeTimeout     = 30 * time.Second  // wait for CSIAddonsNode CIDRs before skipping L1-E-003
-	// FENCE_TARGET_SERVICES lists "namespace/service" whose backends resolve for single-cluster iptables discovery
-	// (comma-separated). Example: "rook-ceph/rook-ceph-active-mons"
-	fenceTargetServicesEnv = "FENCE_TARGET_SERVICES"
-	// FENCE_PEER_SERVICES lists "namespace/service" resolved on the **peer** cluster in full-DR iptables tests
-	// (same format as FENCE_TARGET_SERVICES). If unset, FENCE_TARGET_SERVICES is reused for peer lookup keys.
-	fencePeerServicesEnv = "FENCE_PEER_SERVICES"
-	// FENCE_AUTO_ENDPOINT_NAMESPACES limits auto-discovery of Endpoints (comma-separated). Default: rook-ceph,csi-addons-system
-	fenceAutoEndpointNamespacesEnv = "FENCE_AUTO_ENDPOINT_NAMESPACES"
-	fenceAutoDiscoveryMaxCIDRs     = 32
 
 	// NetworkFence/NetworkFenceClass finalizers (must match internal/controller/csiaddons/networkfence*.go)
 	networkFenceFinalizer      = "csiaddons.openshift.io/network-fence"
@@ -908,413 +896,74 @@ func CreateNetworkFenceClass(ctx context.Context, c client.Client, name, provisi
 	return nfc
 }
 
-// GetFenceCIDRsForFaultInjection returns CIDRs for the iptables fault injector only (not NetworkFence).
-// Order: 1) FENCE_CIDRS, 2) service/backend IPs (Endpoints + EndpointSlice). Raw cluster node InternalIPs are
-// never used as fence targets (avoids blocking the fencing node); use FENCE_CIDRS if you must target a node IP.
-func GetFenceCIDRsForFaultInjection(ctx context.Context, c client.Client) []string {
-	if cidrs := parseFenceCIDRSFromEnv(); len(cidrs) > 0 {
-		Logf("[DEBUG]", "GetFenceCIDRsForFaultInjection: Using FENCE_CIDRS env: %v", cidrs)
-		return cidrs
-	}
-	Logf("[INFO]", "GetFenceCIDRsForFaultInjection: resolving targets via GetNodeIPsForFencing (iptables: no raw node-IP fence targets)")
-	return GetNodeIPsForFencing(ctx, c)
-}
-
-// GetFenceCIDRsForFaultInjectionPeer resolves fence targets for full-DR iptables only (not NetworkFence).
-// Backends come from the peer cluster; fencing-cluster node InternalIPs are excluded so the API path is not
-// self-fenced. Raw node IPs are never chosen as targets. Order: 1) FENCE_CIDRS, 2) FENCE_PEER_SERVICES or
-// FENCE_TARGET_SERVICES on peerClient.
-func GetFenceCIDRsForFaultInjectionPeer(ctx context.Context, fencingClient, peerClient client.Client) []string {
-	if cidrs := parseFenceCIDRSFromEnv(); len(cidrs) > 0 {
-		Logf("[DEBUG]", "GetFenceCIDRsForFaultInjectionPeer: Using FENCE_CIDRS env: %v", cidrs)
-		return cidrs
-	}
-	fencingNodeIPs := collectNodeInternalIPSet(ctx, fencingClient)
-	keys := parseFencePeerServicesFromEnv()
-	if len(keys) == 0 {
-		Logf("[WARN]", "GetFenceCIDRsForFaultInjectionPeer: set %s or %s (namespace/service list) or FENCE_CIDRS",
-			fencePeerServicesEnv, fenceTargetServicesEnv)
-		return nil
-	}
-	var merged []string
-	for _, key := range keys {
-		ips := collectServiceBackendIPs(ctx, peerClient, key)
-		Logf("[INFO]", "peer fence: %s/%s backend IPs on peer cluster: %v", key.Namespace, key.Name, ips)
-		merged = append(merged, ips...)
-	}
-	out := filterEndpointIPsToCIDRs(merged, fencingNodeIPs)
-	if len(out) > 0 {
-		Logf("[INFO]", "GetFenceCIDRsForFaultInjectionPeer: CIDRs after excluding fencing-cluster node InternalIPs: %v", out)
-		return capFenceCIDRList(out)
-	}
-	if len(merged) > 0 {
-		Logf("[WARN]", "GetFenceCIDRsForFaultInjectionPeer: all peer backend IPs match a fencing-cluster node InternalIP; nothing left to fence")
-	} else {
-		Logf("[WARN]", "GetFenceCIDRsForFaultInjectionPeer: no backend IPs from peer services (check Endpoints/EndpointSlices on peer)")
-	}
-	return nil
-}
-
-// GetFenceCIDRs returns CIDRs for the NetworkFence fault injector only (iptables uses GetFenceCIDRsForFaultInjection*).
-// Order: 1) FENCE_CIDRS, 2) CSIAddonsNode status.networkFenceClientStatus for networkFenceClassName, 3) node
-// InternalIPs as host routes (CSI did not publish CIDRs in time). Iptables never uses this path and never falls
-// back to raw node IPs as fence targets. For full-DR, if the NetworkFenceClass lives on c but peer nodes are on
-// another cluster, use GetFenceCIDRsWithPeerNodeClient.
+// GetFenceCIDRs returns CIDRs to use for NetworkFence. It first checks env FENCE_CIDRS (comma-separated).
+// If unset, it waits up to fenceCIDRProbeTimeout for CSIAddonsNodes (matching provisioner) to have
+// status.networkFenceClientStatus for networkFenceClassName. If still empty, falls back to node InternalIPs
+// (useful when driver does not advertise GET_CLIENTS_TO_FENCE, e.g. CephFS). Returns nil only when all
+// sources fail (caller should skip the test).
 func GetFenceCIDRs(ctx context.Context, c client.Client, provisioner, networkFenceClassName string) []string {
-	return getFenceCIDRs(ctx, c, provisioner, networkFenceClassName, nil)
-}
-
-// GetFenceCIDRsWithPeerNodeClient is like GetFenceCIDRs but, when falling back to node InternalIPs after a CSI
-// timeout, uses peerNodeClient for node discovery instead of c. Pass the peer cluster client when c is the
-// cluster where you list CSIAddonsNode / create NetworkFenceClass but the fenced peer is the other cluster.
-func GetFenceCIDRsWithPeerNodeClient(ctx context.Context, c, peerNodeClient client.Client, provisioner, networkFenceClassName string) []string {
-	return getFenceCIDRs(ctx, c, provisioner, networkFenceClassName, peerNodeClient)
-}
-
-func getFenceCIDRs(ctx context.Context, c client.Client, provisioner, networkFenceClassName string, peerNodeClient client.Client) []string {
-	if cidrs := parseFenceCIDRSFromEnv(); len(cidrs) > 0 {
-		Logf("[DEBUG]", "GetFenceCIDRs: Using FENCE_CIDRS env var: %v", cidrs)
-		return cidrs
+	if s := os.Getenv("FENCE_CIDRS"); s != "" {
+		var cidrs []string
+		for _, part := range strings.Split(s, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				cidrs = append(cidrs, part)
+			}
+		}
+		if len(cidrs) > 0 {
+			return cidrs
+		}
 	}
-	Logf("[DEBUG]", "GetFenceCIDRs: FENCE_CIDRS not set, checking CSIAddonsNode for networkFenceClientStatus (provisioner=%s, class=%s)", provisioner, networkFenceClassName)
 	deadline := time.Now().Add(fenceCIDRProbeTimeout)
 	var cidrs []string
 	for time.Now().Before(deadline) {
 		list := &csiaddonsv1alpha1.CSIAddonsNodeList{}
 		err := c.List(ctx, list)
 		if err != nil {
-			Logf("[DEBUG]", "GetFenceCIDRs: Failed to list CSIAddonsNodes: %v", err)
 			time.Sleep(pollInterval)
 			continue
 		}
-		Logf("[DEBUG]", "GetFenceCIDRs: Found %d CSIAddonsNodes", len(list.Items))
 		cidrs = nil
 		for i := range list.Items {
 			node := &list.Items[i]
-			Logf("[DEBUG]", "GetFenceCIDRs: Checking CSIAddonsNode %s (driver=%s)", node.Name, node.Spec.Driver.Name)
 			if node.Spec.Driver.Name != provisioner {
 				continue
 			}
-			Logf("[DEBUG]", "GetFenceCIDRs: Driver matches, checking networkFenceClientStatus (%d statuses)", len(node.Status.NetworkFenceClientStatus))
 			for _, nfcs := range node.Status.NetworkFenceClientStatus {
-				Logf("[DEBUG]", "GetFenceCIDRs:   NetworkFenceClass: %s (looking for %s)", nfcs.NetworkFenceClassName, networkFenceClassName)
 				if nfcs.NetworkFenceClassName != networkFenceClassName {
 					continue
 				}
-				Logf("[DEBUG]", "GetFenceCIDRs:   Class matches, found %d client details", len(nfcs.ClientDetails))
 				for _, detail := range nfcs.ClientDetails {
 					cidrs = append(cidrs, detail.Cidrs...)
 				}
 			}
 		}
 		if len(cidrs) > 0 {
-			Logf("[INFO]", "GetFenceCIDRs: Found CIDRs from CSIAddonsNode: %v", cidrs)
 			return cidrs
 		}
-		Logf("[DEBUG]", "GetFenceCIDRs: No CIDRs found yet, retrying in %v...", pollInterval)
 		time.Sleep(pollInterval)
 	}
-	Logf("[WARN]", "GetFenceCIDRs: Timeout waiting for CSIAddonsNode networkFenceClientStatus for class %q", networkFenceClassName)
-	nodeClient := c
-	if peerNodeClient != nil {
-		nodeClient = peerNodeClient
-		Logf("[INFO]", "GetFenceCIDRs: Using peer cluster client for node-IP fallback (not the CSI list client)")
-	}
-	fallback := collectAllNodeInternalIPCIDRs(ctx, nodeClient)
-	if len(fallback) == 0 {
-		Logf("[WARN]", "GetFenceCIDRs: Node InternalIP fallback found no nodes; set FENCE_CIDRS explicitly")
-		return nil
-	}
-	Logf("[WARN]", "GetFenceCIDRs: Using node InternalIP fallback CIDRs (driver did not publish client CIDRs in time): %v", fallback)
-	return capFenceCIDRList(fallback)
+	// Fallback: use node InternalIPs when driver does not advertise GET_CLIENTS_TO_FENCE (e.g. CephFS)
+	return GetNodeIPsForFencing(ctx, c)
 }
 
-// collectAllNodeInternalIPCIDRs returns each node's primary InternalIP as a host route (IPv4 /32, IPv6 /128), sorted.
-func collectAllNodeInternalIPCIDRs(ctx context.Context, c client.Client) []string {
-	set := collectNodeInternalIPSet(ctx, c)
-	if len(set) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(set))
-	for ipStr := range set {
-		if ipStr == "" {
-			continue
-		}
-		parsed := net.ParseIP(ipStr)
-		if parsed == nil {
-			continue
-		}
-		if parsed.To4() != nil {
-			out = append(out, fmt.Sprintf("%s/32", ipStr))
-		} else {
-			out = append(out, fmt.Sprintf("%s/128", ipStr))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// GetNodeIPsForFencing resolves iptables fence CIDRs from service backends and auto-discovered Endpoints:
-// 1) FENCE_TARGET_SERVICES (Endpoints + EndpointSlice); 2) auto-discovered Endpoints in FENCE_AUTO_ENDPOINT_NAMESPACES.
-// Node InternalIPs are excluded from picks; raw node IPs are never used as iptables fence targets (use FENCE_CIDRS to target a node explicitly).
+// GetNodeIPsForFencing returns node InternalIPs as /32 CIDRs. Used as fallback when
+// FENCE_CIDRS is unset and CSIAddonsNode networkFenceClientStatus is empty.
 func GetNodeIPsForFencing(ctx context.Context, c client.Client) []string {
-	nodeIPs := collectNodeInternalIPSet(ctx, c)
-	Logf("[DEBUG]", "GetNodeIPsForFencing: node InternalIPs (excluded from endpoint picks): %v", sortedKeys(nodeIPs))
-
-	if cidrs := fenceCIDRsFromConfiguredTargetServices(ctx, c, nodeIPs); len(cidrs) > 0 {
-		return capFenceCIDRList(cidrs)
-	}
-	if cidrs := fenceCIDRsFromAutoDiscoveredEndpoints(ctx, c, nodeIPs); len(cidrs) > 0 {
-		return capFenceCIDRList(cidrs)
-	}
-
-	Logf("[WARN]", "GetNodeIPsForFencing: no usable backend IPs after excluding node InternalIPs; set %s or FENCE_CIDRS (iptables does not use raw node IPs as targets)",
-		fenceTargetServicesEnv)
-	return nil
-}
-
-func parseFenceCIDRSFromEnv() []string {
-	s := strings.TrimSpace(os.Getenv("FENCE_CIDRS"))
-	if s == "" {
+	nodeList := &corev1.NodeList{}
+	if err := c.List(ctx, nodeList); err != nil {
 		return nil
 	}
 	var cidrs []string
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			cidrs = append(cidrs, part)
-		}
-	}
-	return cidrs
-}
-
-func collectNodeInternalIPSet(ctx context.Context, c client.Client) map[string]struct{} {
-	out := make(map[string]struct{})
-	nodeList := &corev1.NodeList{}
-	if err := c.List(ctx, nodeList); err != nil {
-		Logf("[DEBUG]", "collectNodeInternalIPSet: list nodes: %v", err)
-		return out
-	}
-	for i := range nodeList.Items {
-		node := &nodeList.Items[i]
+	for _, node := range nodeList.Items {
 		for _, addr := range node.Status.Addresses {
 			if addr.Type == corev1.NodeInternalIP && addr.Address != "" {
-				out[addr.Address] = struct{}{}
+				cidrs = append(cidrs, addr.Address+"/32")
 				break
 			}
 		}
 	}
-	return out
-}
-
-func sortedKeys(m map[string]struct{}) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func parseFenceTargetServicesFromEnv() []client.ObjectKey {
-	return parseFenceNamespaceServiceList(os.Getenv(fenceTargetServicesEnv), fenceTargetServicesEnv)
-}
-
-// parseFencePeerServicesFromEnv returns service keys for peer-cluster lookup: FENCE_PEER_SERVICES if set,
-// otherwise the same keys as FENCE_TARGET_SERVICES.
-func parseFencePeerServicesFromEnv() []client.ObjectKey {
-	s := strings.TrimSpace(os.Getenv(fencePeerServicesEnv))
-	if s != "" {
-		return parseFenceNamespaceServiceList(s, fencePeerServicesEnv)
-	}
-	return parseFenceTargetServicesFromEnv()
-}
-
-func parseFenceNamespaceServiceList(raw, envVar string) []client.ObjectKey {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return nil
-	}
-	var keys []client.ObjectKey
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		ns, name, ok := strings.Cut(part, "/")
-		if !ok {
-			Logf("[WARNING]", "%s: skip %q (want namespace/service)", envVar, part)
-			continue
-		}
-		ns, name = strings.TrimSpace(ns), strings.TrimSpace(name)
-		if ns == "" || name == "" {
-			continue
-		}
-		keys = append(keys, client.ObjectKey{Namespace: ns, Name: name})
-	}
-	return keys
-}
-
-func ipToFenceCIDR(ip string) string {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return ""
-	}
-	if parsed.To4() == nil {
-		return ip + "/128"
-	}
-	return ip + "/32"
-}
-
-func filterEndpointIPsToCIDRs(ips []string, nodeIPs map[string]struct{}) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, ip := range ips {
-		if _, onNode := nodeIPs[ip]; onNode {
-			Logf("[DEBUG]", "filterEndpointIPs: skip %s (matches node InternalIP — avoids fencing apiserver/kubelet host)", ip)
-			continue
-		}
-		cidr := ipToFenceCIDR(ip)
-		if cidr == "" {
-			continue
-		}
-		if _, ok := seen[cidr]; ok {
-			continue
-		}
-		seen[cidr] = struct{}{}
-		out = append(out, cidr)
-	}
-	return out
-}
-
-// collectServiceBackendIPs collects backend IPs from EndpointSlices labeled for the Service.
-// (v1 Endpoints is deprecated in Kubernetes 1.33+; EndpointSlice has been available since 1.21.)
-func collectServiceBackendIPs(ctx context.Context, c client.Client, key client.ObjectKey) []string {
-	seen := make(map[string]struct{})
-	var ips []string
-	add := func(ip string) {
-		if ip == "" {
-			return
-		}
-		if _, ok := seen[ip]; ok {
-			return
-		}
-		seen[ip] = struct{}{}
-		ips = append(ips, ip)
-	}
-	sliceList := &discoveryv1.EndpointSliceList{}
-	listOpts := []client.ListOption{
-		client.InNamespace(key.Namespace),
-		client.MatchingLabels{discoveryv1.LabelServiceName: key.Name},
-	}
-	if err := c.List(ctx, sliceList, listOpts...); err != nil {
-		Logf("[DEBUG]", "collectServiceBackendIPs: list EndpointSlices %s/%s: %v", key.Namespace, key.Name, err)
-		return ips
-	}
-	for i := range sliceList.Items {
-		for j := range sliceList.Items[i].Endpoints {
-			for _, addr := range sliceList.Items[i].Endpoints[j].Addresses {
-				add(addr)
-			}
-		}
-	}
-	return ips
-}
-
-func fenceCIDRsFromConfiguredTargetServices(ctx context.Context, c client.Client, nodeIPs map[string]struct{}) []string {
-	keys := parseFenceTargetServicesFromEnv()
-	if len(keys) == 0 {
-		return nil
-	}
-	var merged []string
-	for _, key := range keys {
-		ips := collectServiceBackendIPs(ctx, c, key)
-		Logf("[INFO]", "%s: service %s/%s backend IPs (Endpoints+EndpointSlice): %v", fenceTargetServicesEnv, key.Namespace, key.Name, ips)
-		merged = append(merged, ips...)
-	}
-	out := filterEndpointIPsToCIDRs(merged, nodeIPs)
-	if len(out) > 0 {
-		Logf("[INFO]", "%s: fence CIDRs after excluding node InternalIPs: %v", fenceTargetServicesEnv, out)
-	} else if len(merged) > 0 {
-		Logf("[WARN]", "%s: all backend IPs matched node InternalIPs; nothing to fence from configured services", fenceTargetServicesEnv)
-	}
-	return out
-}
-
-func autoDiscoverFenceEndpointNamespaces() []string {
-	s := strings.TrimSpace(os.Getenv(fenceAutoEndpointNamespacesEnv))
-	if s == "" {
-		return []string{"rook-ceph", "csi-addons-system"}
-	}
-	var ns []string
-	for _, part := range strings.Split(s, ",") {
-		if t := strings.TrimSpace(part); t != "" {
-			ns = append(ns, t)
-		}
-	}
-	if len(ns) == 0 {
-		return []string{"rook-ceph", "csi-addons-system"}
-	}
-	return ns
-}
-
-func endpointNameLikelyStorageOrCSI(name string) bool {
-	n := strings.ToLower(name)
-	switch {
-	case n == "kubernetes":
-		return false
-	case strings.HasPrefix(n, "rook-ceph"):
-		return true
-	case strings.Contains(n, "csi-addons"):
-		return true
-	}
-	for _, tok := range []string{"mon", "mgr", "ceph", "rbd", "osd", "mds", "nfs", "csi"} {
-		if strings.Contains(n, tok) {
-			return true
-		}
-	}
-	return false
-}
-
-func fenceCIDRsFromAutoDiscoveredEndpoints(ctx context.Context, c client.Client, nodeIPs map[string]struct{}) []string {
-	var allIPs []string
-	for _, ns := range autoDiscoverFenceEndpointNamespaces() {
-		epList := &corev1.EndpointsList{}
-		if err := c.List(ctx, epList, client.InNamespace(ns)); err != nil {
-			Logf("[DEBUG]", "auto-discover Endpoints in namespace %q: %v", ns, err)
-			continue
-		}
-		for i := range epList.Items {
-			ep := &epList.Items[i]
-			if len(ep.Subsets) == 0 || !endpointNameLikelyStorageOrCSI(ep.Name) {
-				continue
-			}
-			for _, sub := range ep.Subsets {
-				for _, a := range sub.Addresses {
-					if a.IP != "" {
-						allIPs = append(allIPs, a.IP)
-					}
-				}
-			}
-		}
-	}
-	out := filterEndpointIPsToCIDRs(allIPs, nodeIPs)
-	if len(out) > 0 {
-		Logf("[INFO]", "GetNodeIPsForFencing: auto-discovered CIDRs from Endpoints (%s=%q): %v",
-			fenceAutoEndpointNamespacesEnv, strings.Join(autoDiscoverFenceEndpointNamespaces(), ","), out)
-	}
-	return out
-}
-
-func capFenceCIDRList(cidrs []string) []string {
-	if len(cidrs) <= fenceAutoDiscoveryMaxCIDRs {
-		return cidrs
-	}
-	Logf("[WARN]", "capping fence CIDR list from %d to %d (set FENCE_CIDRS to be explicit)", len(cidrs), fenceAutoDiscoveryMaxCIDRs)
-	return append([]string(nil), cidrs[:fenceAutoDiscoveryMaxCIDRs]...)
+	return cidrs
 }
 
 // CreateNetworkFence creates a NetworkFence that blocks (Fenced) or unblocks (Unfenced) the given CIDRs.
@@ -1352,29 +1001,20 @@ func CreateNetworkFenceAndWait(ctx context.Context, c client.Client, namespace, 
 	nfcName := "nfc-" + UniqueNamespace()
 	nfName := "nf-" + UniqueNamespace()
 
-	Logf("[DEBUG]", "CreateNetworkFenceAndWait: Creating NetworkFenceClass: %s", nfcName)
 	// Create NetworkFenceClass
 	nfc := CreateNetworkFenceClass(ctx, c, nfcName, provisioner, secretName, secretNamespace)
-	Logf("[INFO]", "CreateNetworkFenceAndWait: NetworkFenceClass created: %s", nfcName)
 
 	// Get CIDRs to fence
-	Logf("[DEBUG]", "CreateNetworkFenceAndWait: Getting fence CIDRs for class: %s", nfcName)
 	cidrs := GetFenceCIDRs(ctx, c, provisioner, nfcName)
 	if len(cidrs) == 0 {
-		Logf("[ERROR]", "CreateNetworkFenceAndWait: No CIDRs found for fencing! Cannot proceed with NetworkFence creation")
 		Expect(cidrs).NotTo(BeEmpty(), "Failed to get CIDRs for network fencing")
 	}
-	Logf("[INFO]", "CreateNetworkFenceAndWait: Retrieved %d CIDRs for fencing: %v", len(cidrs), cidrs)
 
 	// Create NetworkFence with Fenced state
-	Logf("[DEBUG]", "CreateNetworkFenceAndWait: Creating NetworkFence: %s with CIDRs: %v", nfName, cidrs)
 	nf := CreateNetworkFence(ctx, c, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-	Logf("[INFO]", "CreateNetworkFenceAndWait: NetworkFence created: %s", nfName)
 
 	// Wait for fence to be applied
-	Logf("[DEBUG]", "CreateNetworkFenceAndWait: Waiting for NetworkFence result (timeout=2 min)...")
 	WaitForNetworkFenceResult(ctx, c, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
-	Logf("[INFO]", "CreateNetworkFenceAndWait: NetworkFence %s result succeeded", nfName)
 
 	return nfc, nf
 }
@@ -1421,64 +1061,6 @@ func RemoveFinalizerFromNetworkFence(ctx context.Context, c client.Client, nf *c
 	})
 }
 
-// logVRState logs comprehensive state information about a VolumeReplication resource in CRD format
-func logVRState(vr *replicationv1alpha1.VolumeReplication, stageName string) {
-	if vr == nil {
-		return
-	}
-
-	// Format conditions as Condition=Status pairs
-	conditionsStr := "NO CONDITIONS"
-	if len(vr.Status.Conditions) > 0 {
-		var condDetails []string
-		for _, cond := range vr.Status.Conditions {
-			condStr := fmt.Sprintf("%s=%s", cond.Type, cond.Status)
-			condDetails = append(condDetails, condStr)
-		}
-		conditionsStr = strings.Join(condDetails, " ")
-	}
-
-	// Format message
-	message := vr.Status.Message
-	if message == "" {
-		message = "-"
-	}
-
-	// Log data line in CRD table format:
-	// NAMESPACE              NAME              STATE        CONDITIONS                               MESSAGE
-	Logf("[INFO]", "%-30s %-30s %-15s %-40s %s",
-		vr.Namespace, vr.Name, vr.Status.State, conditionsStr, message)
-}
-
-// logVRState logs comprehensive state information about a VolumeReplication resource in CRD format
-func logVRState(vr *replicationv1alpha1.VolumeReplication, stageName string) {
-	if vr == nil {
-		return
-	}
-
-	// Format conditions as Condition=Status pairs
-	conditionsStr := "NO CONDITIONS"
-	if len(vr.Status.Conditions) > 0 {
-		var condDetails []string
-		for _, cond := range vr.Status.Conditions {
-			condStr := fmt.Sprintf("%s=%s", cond.Type, cond.Status)
-			condDetails = append(condDetails, condStr)
-		}
-		conditionsStr = strings.Join(condDetails, " ")
-	}
-
-	// Format message
-	message := vr.Status.Message
-	if message == "" {
-		message = "-"
-	}
-
-	// Log data line in CRD table format:
-	// NAMESPACE              NAME              STATE        CONDITIONS                               MESSAGE
-	Logf("[INFO]", "%-30s %-30s %-15s %-40s %s",
-		vr.Namespace, vr.Name, vr.Status.State, conditionsStr, message)
-}
-
 // DeleteNetworkFenceWithCleanup unfences the CIDRs (sets fenceState: Unfenced), then deletes the
 // NetworkFence. Deletion no longer triggers UnfenceClusterNetwork; unfence must be explicit.
 // If vrs is provided (non-nil), waits for each VR's Degraded condition to become False before deletion.
@@ -1498,101 +1080,25 @@ func DeleteNetworkFenceWithCleanup(ctx context.Context, c client.Client, nf *csi
 		UnfenceNetworkFence(ctx, c, nf)
 		// Wait for unfence operation to complete before deletion
 		WaitForNetworkFenceResult(ctx, c, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
-
 		// If VRs provided, wait for them to recover (Degraded=False) instead of hardcoded sleep
-		// After unfencing, RBD mirror needs time to detect connectivity and process state updates
-		if len(vrs) > 0 {
-			Logf("[INFO]", "NetworkFence unfenced successfully, allowing RBD mirror time to detect connectivity restoration")
-			// Give RBD mirror a moment to process the unfence and detect connectivity is restored
-			time.Sleep(3 * time.Second)
-
-			Logf("[INFO]", "")
-			Logf("[INFO]", "==== VR STATE BEFORE UNFENCING ====")
-			Logf("[INFO]", "%-30s %-30s %-15s %-40s %s", "NAMESPACE", "NAME", "STATE", "CONDITIONS", "MESSAGE")
-			for _, vr := range vrs {
-				if vr == nil {
-					continue
-				}
+		for _, vr := range vrs {
+			if vr == nil {
+				continue
+			}
+			Eventually(func() bool {
 				err := c.Get(ctx, client.ObjectKeyFromObject(vr), vr)
 				if err != nil {
-					Logf("[WARNING]", "Failed to fetch VR %s/%s before unfence: %v", vr.Namespace, vr.Name, err)
-					continue
+					return false
 				}
-				logVRState(vr, "PRE-UNFENCE")
-			}
-
-			Logf("[INFO]", "")
-			Logf("[INFO]", "==== VR STATE IMMEDIATELY AFTER UNFENCING ====")
-			Logf("[INFO]", "%-30s %-30s %-15s %-40s %s", "NAMESPACE", "NAME", "STATE", "CONDITIONS", "MESSAGE")
-			for _, vr := range vrs {
-				if vr == nil {
-					continue
-				}
-				err := c.Get(ctx, client.ObjectKeyFromObject(vr), vr)
-				if err != nil {
-					Logf("[WARNING]", "Failed to fetch VR %s/%s immediately after unfence: %v", vr.Namespace, vr.Name, err)
-					continue
-				}
-				logVRState(vr, "POST-UNFENCE-IMMEDIATE")
-			}
-
-			Logf("[INFO]", "Starting recovery verification: waiting for VR Degraded=False")
-
-			firstPoll := true
-			for _, vr := range vrs {
-				if vr == nil {
-					continue
-				}
-				pollCount := 0
-				Eventually(func() bool {
-					pollCount++
-					err := c.Get(ctx, client.ObjectKeyFromObject(vr), vr)
-					if err != nil {
-						Logf("[DEBUG]", "[Poll %2d] Failed to fetch VR %s/%s: %v", pollCount, vr.Namespace, vr.Name, err)
-						return false
+				// Check that VR is no longer degraded (Degraded=False)
+				for _, cond := range vr.Status.Conditions {
+					if cond.Type == "Degraded" {
+						return cond.Status == metav1.ConditionFalse
 					}
-
-					// Log header only on first poll to avoid clutter
-					if pollCount == 1 && firstPoll {
-						Logf("[INFO]", "")
-						Logf("[INFO]", "==== VR RECOVERY MONITORING (polling every 5s, timeout 300s) ====")
-						Logf("[INFO]", "%-30s %-30s %-15s %-40s %s", "NAMESPACE", "NAME", "STATE", "CONDITIONS", "MESSAGE")
-						firstPoll = false
-					}
-
-					// Log current state for debugging with all details
-					logVRState(vr, fmt.Sprintf("RECOVERY-POLL-%d", pollCount))
-
-					// VR is recovered when Degraded is False (or condition absent = true)
-					for _, cond := range vr.Status.Conditions {
-						if cond.Type == replicationv1alpha1.ConditionDegraded {
-							if cond.Status == metav1.ConditionFalse {
-								Logf("[INFO]", "✓ VR %s/%s HAS RECOVERED: Degraded=False", vr.Namespace, vr.Name)
-								return true
-							}
-							// Still degraded, continue waiting
-							return false
-						}
-					}
-					// No Degraded condition means VR is healthy/recovered
-					Logf("[INFO]", "✓ VR %s/%s HAS RECOVERED: Degraded condition absent", vr.Namespace, vr.Name)
-					return true
-				}, 300*time.Second, 5*time.Second).Should(BeTrue(),
-					"VR %s/%s health should recover (Degraded=False) after unfencing", vr.Namespace, vr.Name)
-
-				// Log final state after recovery
-				err := c.Get(ctx, client.ObjectKeyFromObject(vr), vr)
-				if err == nil {
-					if firstPoll {
-						Logf("[INFO]", "")
-						Logf("[INFO]", "==== VR FINAL STATE (RECOVERED) ====")
-						Logf("[INFO]", "%-30s %-30s %-15s %-40s %s", "NAMESPACE", "NAME", "STATE", "CONDITIONS", "MESSAGE")
-						firstPoll = false
-					}
-					logVRState(vr, "FINAL-RECOVERED")
 				}
-			}
-			Logf("[INFO]", "All VRs recovered after unfencing, proceeding with deletion")
+				return false
+			}, 200*time.Second, 10*time.Second).Should(BeTrue(),
+				"VR %s/%s health should recover (Degraded=False) after unfencing", vr.Namespace, vr.Name)
 		}
 	}
 	_ = c.Delete(ctx, nf)

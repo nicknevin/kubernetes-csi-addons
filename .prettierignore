@@ -1,0 +1,7 @@
+# Aligned with .github/workflows/lint-extras.yaml FILTER_REGEX_EXCLUDE (Markdown tooling).
+vendor/
+tools/vendor/
+bundle/
+Temp/
+Reports/
+Logs/

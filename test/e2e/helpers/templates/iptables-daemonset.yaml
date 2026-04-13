@@ -1,8 +1,11 @@
+# yamllint disable rule:braces,rule:comments,rule:trailing-spaces
+# This file contains Go template syntax that yamllint cannot parse
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: csi-addons-iptables-manager
-  namespace: {{ .Namespace }}
+  namespace: {{.Namespace}}
   labels:
     app: csi-addons-iptables-manager
     csi-addons.io/component: fault-injection
@@ -20,33 +23,41 @@ spec:
       {{- if .NodeSelector }}
       nodeSelector:
         {{- range $key, $value := .NodeSelector }}
-        {{ $key }}: {{ $value }}
+        {{$key}}: {{$value}}  # yamllint disable-line rule:syntax
         {{- end }}
       {{- end }}
       securityContext:
         runAsUser: 0
       containers:
       - name: iptables-manager
-        image: {{ .Image }}
+        image: {{.Image}}
         imagePullPolicy: Never
         command:
         - sh
         - -c
         - |
           echo 'CSI-Addons Iptables Manager starting...';
-          echo 'Iptables version:'; iptables --version &&
-          echo 'Available tools:'; which iptables ping nc nslookup &&
+          # Test iptables detection using pre-built script
+          IPT_CMD=$(detect-iptables)
+          if [ -z "$IPT_CMD" ]; then
+            echo "ERROR: No working iptables command found"
+            exit 1
+          fi
+
+          echo "Detected iptables command: $IPT_CMD"
+          echo "Iptables version:"; "$IPT_CMD" --version
+          echo 'Available tools:'; which "$IPT_CMD" ping nc nslookup
+          echo 'Available fence commands:'; ls -la /usr/local/bin/*fence* /usr/local/bin/detect-iptables
           echo 'Creating readiness marker...';
           touch /tmp/iptables-ready &&
-          echo 'Starting iptables rules monitoring loop...';
+          echo 'Iptables manager ready for fence operations via kubectl exec';
+          # Keep container running for exec commands
           while true; do
-            if [ -f /rules/apply.sh ]; then
-              echo '[$(date)] Executing /rules/apply.sh';
-              chmod +x /rules/apply.sh && /rules/apply.sh 2>&1 | tee -a /var/log/iptables.log;
-            else
-              echo '[$(date)] No rules file found, waiting...';
-            fi;
-            sleep 10;
+            sleep 30
+            # Periodically check iptables health
+            if ! "$IPT_CMD" --version >/dev/null 2>&1; then
+              echo "[$(date)] WARNING: iptables command failed health check"
+            fi
           done
         securityContext:
           privileged: true
@@ -66,7 +77,7 @@ spec:
             command:
             - sh
             - -c
-            - test -f /tmp/iptables-ready && iptables --version
+            - test -f /tmp/iptables-ready
           initialDelaySeconds: 2
           periodSeconds: 5
           timeoutSeconds: 3
@@ -84,18 +95,11 @@ spec:
           successThreshold: 1
           failureThreshold: 10
         volumeMounts:
-        - name: iptables-rules
-          mountPath: /rules
-          readOnly: true
         - name: tmp-dir
           mountPath: /tmp
       tolerations:
       - operator: Exists
       terminationGracePeriodSeconds: 10
       volumes:
-      - name: iptables-rules
-        configMap:
-          name: csi-addons-iptables-manager-rules
-          defaultMode: 0755
       - name: tmp-dir
         emptyDir: {}

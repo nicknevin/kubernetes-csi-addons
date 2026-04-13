@@ -1,8 +1,10 @@
+# yamllint disable rule:braces,rule:comments
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: csi-addons-iptables-manager-rules
-  namespace: {{ .Namespace }}
+  namespace: {{.Namespace}}
   labels:
     app: csi-addons-iptables-manager
     csi-addons.io/component: fault-injection

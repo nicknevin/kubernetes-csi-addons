@@ -7,6 +7,8 @@ ignore:
   - bundle/
   # vendor/ are maintained elsewhere
   - vendor/
+  # Template files contain Go templating syntax that yamllint cannot parse
+  - test/e2e/helpers/templates/
 
 rules:
   document-start:

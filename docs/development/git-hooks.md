@@ -5,6 +5,7 @@ This repository uses Git pre-commit hooks to catch linting issues locally before
 ## Setup
 
 ### Automatic Setup (Recommended)
+
 After cloning the repository, run:
 
 ```bash
@@ -14,6 +15,7 @@ After cloning the repository, run:
 This will install all pre-commit hooks to `.Git/hooks/` and make them executable.
 
 ### Manual Setup
+
 If you prefer to set up manually:
 
 ```bash
@@ -24,26 +26,32 @@ chmod +x .Git/hooks/*
 ## Available Hooks
 
 ### pre-commit
-Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, and **markdownlint** on all staged files before allowing a commit.
+
+Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, **markdownlint**, and **Prettier** (`prettier@3.5.3` for Markdown, matching the GitHub Actions super-linter **MARKDOWN_PRETTIER** check) on staged files before allowing a commit.
 
 **What it does:**
+
 - Checks all modified/staged shell scripts (`.sh`) with shellcheck
 - Checks all modified/staged shell scripts syntax with bash -n (BASH_EXEC)
 - Checks all modified/staged shell scripts formatting with shfmt (SHELL_SHFMT)
 - Checks all modified/staged YAML files (`.yaml`, `.yml`) with yamllint
-- Checks all modified/staged markdown files (`.md`) with markdownlint
+- Checks all modified/staged Markdown files (`.md`) with markdownlint
+- Checks all modified/staged Markdown files with Prettier (`npx prettier@3.5.3 --check`, same as CI **MARKDOWN_PRETTIER**)
 - Prevents commits if any linting errors are found
 - Shows detailed error messages to help you fix issues
 - Only checks for linting tools if files of that type are present
 
+**CI parity:** The workflow [lint-extras.yaml](../../.github/workflows/lint-extras.yaml) also runs **NATURAL_LANGUAGE** (textlint) on Markdown; that check is **not** in the hook. See [CI pipeline (super-linter) versus pre-commit](#ci-pipeline-super-linter-versus-pre-commit).
+
 **Example output:**
+
 ```plaintext
 Running pre-commit linting checks...
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Shellcheck (Shell scripts)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Checking hack/run-replication-end-to-end.sh... Pass
+  Checking hack/run-replication-e2e.sh... Pass
 Shellcheck: 1 passed, 0 failed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -61,6 +69,7 @@ All files passed linting!
 ```
 
 **Example when there are errors:**
+
 ```plaintext
 Running pre-commit linting checks...
 
@@ -97,6 +106,7 @@ Git commit --no-verify
 **Important**: The CI pipeline will still run the same checks and **fail if linting issues exist**. This should only be used as a temporary measure while you work on fixes.
 
 **Example:**
+
 ```bash
 Git add .
 Git commit --no-verify -m "WIP: fixing linting issues"
@@ -109,42 +119,47 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 ## Requirements
 
 ### Required Tools
+
 - `Git` - Version control
 - `shellcheck` - Shell script linting
 - `yamllint` - YAML file linting
 
 ### Optional Tools (Recommended for Full Validation)
+
 - `shfmt` - Shell script formatting checker
 - `bash` - Shell syntax validator (usually pre-installed)
-- `markdownlint` - Markdown file linting
+- `markdownlint` - Markdown file linting (**install for MARKDOWN CI parity**)
+- Node.js (`npx`) - Required for Prettier checks in the hook (**install for MARKDOWN_PRETTIER CI parity**)
 
 ### Installing shellcheck
+
 - **macOS**: `brew install shellcheck`
 - **Ubuntu/Debian**: `apt-get install shellcheck`
 - **Fedora/RHEL**: `dnf install ShellCheck`
 - **Other**: See [shellcheck on GitHub](https://github.com/koalaman/shellcheck)
 
 ### Installing yamllint
+
 - **macOS**: `brew install yamllint`
 - **Ubuntu/Debian**: `apt-get install yamllint`
 - **Fedora/RHEL**: `dnf install yamllint`
-- **Python/pip**: `pip install yamllint`
+- **Python/pip**: `pip install yamllint` (the hook also uses `python3 -m yamllint` if the `yamllint` binary is not on `PATH`)
 - **Other**: See [yamllint on GitHub](https://github.com/adrienverge/yamllint)
 
 ### Installing shfmt (Recommended)
+
 - **macOS**: `brew install shfmt`
 - **Ubuntu/Debian**: `apt-get install shfmt`
 - **Fedora/RHEL**: `dnf install shfmt`
 - **Go**: `go install mvdan.cc/sh/v3/cmd/shfmt@latest`
 
 ### Installing markdownlint (Recommended)
-- **Node.js**: `npm install -g markdownlint`
-- **Ubuntu/Debian**: May be available as `node-markdownlint`
-- **Python**: `pip install markdownlint` (or `mdl`)
 
-**Note**: The hook will warn if optional tools are not installed but will still allow commits. It's recommended to install all tools to catch issues locally before they reach the CI pipeline.
+- **Node.js**: `npm install -g markdownlint-cli` (the hook runs `markdownlint` on `PATH`, or `npx markdownlint-cli` if only Node/npx is available)
+- **Ubuntu/Debian**: May ship `markdownlint` as `node-markdownlint`
+- **Python**: `pip install markdownlint` (or `mdl`) — not used by the hook; prefer **markdownlint-cli** for CI parity
 
-If either tool is not installed, the hook will warn but not block commits for that file type.
+**Note:** If a tool for a given file type is missing, the hook warns and **skips** that check (for example no `markdownlint` means **MARKDOWN** is not validated locally). Install all recommended tools so local runs match `.github/workflows/lint-extras.yaml` for shell, YAML, and Markdown.
 
 ## Testing Hooks Locally
 
@@ -152,7 +167,7 @@ To test if your shell scripts pass linting before committing:
 
 ```bash
 # Check a specific file
-shellcheck hack/run-replication-end-to-end.sh
+shellcheck hack/run-replication-e2e.sh
 
 # Check all shell files
 find . -name "*.sh" -type f | xargs shellcheck
@@ -186,6 +201,7 @@ Git commit -m "Continue working"
 ```
 
 **Verify the hook status:**
+
 ```bash
 # Check if hook is executable (enabled)
 ls -la .Git/hooks/pre-commit
@@ -217,11 +233,12 @@ Git commit --no-verify -m "Commit message"
 ```
 
 **When to use each option:**
-| Scenario | Method | Command |
-|----------|--------|---------|
-| Single commit to bypass | `--no-verify` | `Git commit --no-verify` |
-| Multiple commits (dev branch) | Disable hook | `chmod -x .Git/hooks/pre-commit` |
-| Completely remove hook | Uninstall | `rm .Git/hooks/pre-commit` |
+
+| Scenario                      | Method        | Command                          |
+| ----------------------------- | ------------- | -------------------------------- |
+| Single commit to bypass       | `--no-verify` | `Git commit --no-verify`         |
+| Multiple commits (dev branch) | Disable hook  | `chmod -x .Git/hooks/pre-commit` |
+| Completely remove hook        | Uninstall     | `rm .Git/hooks/pre-commit`       |
 
 ## Re-enabling Hooks
 
@@ -243,37 +260,76 @@ If you disabled the hook, run the setup script again to re-enable it.
 ## Troubleshooting
 
 ### "shellcheck: command not found"
+
 The hook warned about this but allowed the commit. Install shellcheck (see Requirements section).
 
 ### Hook not running
+
 Verify it's executable:
+
 ```bash
 ls -la .Git/hooks/pre-commit
 # Should show: -rwxr-xr-x (executable)
 ```
 
 If not executable, run:
+
 ```bash
 ./scripts/setup-hooks.sh
 ```
 
 ### Commit blocked by hook, but I don't see the error
+
 The error output may have been cut off. Run shellcheck manually:
+
 ```bash
 shellcheck <your-file>.sh
 ```
 
-## CI Pipeline
+## CI pipeline (super-linter) versus pre-commit
 
-The same linting checks run in the GitHub Actions CI pipeline:
-- Workflow: `.github/workflows/lint-extras.yaml`
-- Check: "Lint codebase" (uses super-linter/slim@v7)
+GitHub Actions runs **super-linter/slim@v7** (workflow: `.github/workflows/lint-extras.yaml`). Among the enabled linters, the following map directly to local tooling:
 
-**Key takeaway**: Fixing linting issues locally before committing prevents CI failures.
+| CI (super-linter)     | What it is                                                                 | Local equivalent in `scripts/hooks/pre-commit`                                                                     |
+| --------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **MARKDOWN**          | [markdownlint](https://github.com/DavidAnson/markdownlint) rules on `*.md` | `markdownlint -c .markdownlint.yaml <file>` (same rules as super-linter v7 template) on each **staged** `.md` file |
+| **MARKDOWN_PRETTIER** | [Prettier](https://prettier.io/) check on `*.md`                           | `npx prettier@3.5.3 --check <file>` on each staged `.md` file (same major as the image used in CI)                 |
+| **NATURAL_LANGUAGE**  | textlint terminology rules                                                 | **Not** run in the hook; **CI only** unless you run textlint or super-linter yourself                              |
+
+YAML re-linting is covered locally with `yamllint`; the workflow sets `VALIDATE_YAML: false` and relies on the separate yamllint workflow where applicable—follow repository CI for the authoritative set.
+
+### Why MARKDOWN / MARKDOWN_PRETTIER can fail in CI even when the hook did not stop you
+
+1. **Staged files only** — The hook lints Markdown that is **staged** for the commit. Unstaged edits, fixes done after commit, or files changed only on the remote branch are still validated in CI for the pull request.
+2. **Missing local tools** — If `markdownlint` or `npx` (Node.js) is not installed, the hook prints a warning and **skips** that check. Other tools (for example shellcheck) can still run, so the commit may succeed without any Markdown validation.
+3. **`git commit --no-verify`** — Skips the entire hook; CI still runs.
+4. **NATURAL_LANGUAGE** — Terminology issues (for example “repo” vs “repository”) are **not** caught by the hook; they appear in CI until you fix them or run textlint/super-linter locally.
+5. **Scope** — CI validates the changes in the PR branch; a file you rarely touch can fail the first time it is included in a PR.
+
+### Commands to mirror CI before pushing
+
+From the repository root, on the same files you are about to push. **Do not** lint `**/*.md` blindly: that includes vendored trees (`vendor/`, `tools/vendor/`). Use tracked paths with Git pathspec excludes (same idea as super-linter’s `FILTER_REGEX_EXCLUDE`), or rely on [`.prettierignore`](../../.prettierignore) when you pass paths to Prettier:
+
+```bash
+git ls-files -z '*.md' \
+  ':(exclude)vendor/**' \
+  ':(exclude)tools/vendor/**' \
+  | xargs -0 npx --yes prettier@3.5.3 --check
+
+git ls-files -z '*.md' \
+  ':(exclude)vendor/**' \
+  ':(exclude)tools/vendor/**' \
+  | xargs -0 markdownlint -c .markdownlint.yaml
+```
+
+To auto-fix formatting on those files: pipe the same `git ls-files …` list to `xargs -0 npx --yes prettier@3.5.3 --write`. Fix remaining markdownlint issues by editing.
+
+**Key takeaway:** Install **markdownlint**, **Node.js (`npx`)**, and the other tools listed under [Requirements](#requirements), run `./scripts/setup-hooks.sh`, and avoid `--no-verify` if you want local commits to match **MARKDOWN** and **MARKDOWN_PRETTIER** in CI. Add textlint or run super-linter locally for **NATURAL_LANGUAGE** parity.
 
 ## Contributing
 
 When adding new shell scripts:
+
 1. Make sure they follow bash best practices
 2. Run shellcheck before committing
 3. The pre-commit hook will catch issues automatically

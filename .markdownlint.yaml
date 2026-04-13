@@ -1,6 +1,6 @@
 ---
 # Aligned with super-linter slim v7 TEMPLATES/.markdown-lint.yml (MARKDOWN job).
-# See: https://github.com/super-linter/super-linter/blob/main/TEMPLATES/.markdown-lint.yml
+# Template source: super-linter repo, path TEMPLATES/.markdown-lint.yml
 MD004: false
 MD007:
   indent: 2

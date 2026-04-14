@@ -27,7 +27,7 @@ chmod +x .Git/hooks/*
 
 ### pre-commit
 
-Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, **markdownlint**, and **Prettier** (`prettier@3.5.3` for Markdown, matching the GitHub Actions super-linter **MARKDOWN_PRETTIER** check) on staged files before allowing a commit.
+Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, **markdownlint**, and **Prettier** (`prettier@3.5.3` for Markdown, matching the GitHub Actions super-linter Markdown Prettier check) on staged files before allowing a commit.
 
 **What it does:**
 
@@ -36,12 +36,12 @@ Runs **shellcheck**, **yamllint**, **bash -n**, **shfmt**, **markdownlint**, and
 - Checks all modified/staged shell scripts formatting with shfmt (SHELL_SHFMT)
 - Checks all modified/staged YAML files (`.yaml`, `.yml`) with yamllint
 - Checks all modified/staged Markdown files (`.md`) with markdownlint
-- Checks all modified/staged Markdown files with Prettier (`npx prettier@3.5.3 --check`, same as CI **MARKDOWN_PRETTIER**)
+- Checks all modified/staged Markdown files with Prettier (`npx prettier@3.5.3 --check`, same as CI Markdown Prettier)
 - Prevents commits if any linting errors are found
 - Shows detailed error messages to help you fix issues
 - Only checks for linting tools if files of that type are present
 
-**CI parity:** The workflow [lint-extras.yaml](../../.github/workflows/lint-extras.yaml) also runs **NATURAL_LANGUAGE** (textlint) on Markdown; that check is **not** in the hook. See [CI pipeline (super-linter) versus pre-commit](#ci-pipeline-super-linter-versus-pre-commit).
+**CI parity:** The workflow [lint-extras.yaml](../../.github/workflows/lint-extras.yaml) also runs **natural language** (textlint) checks on Markdown; that check is **not** in the hook. See [CI pipeline (super-linter) versus pre-commit](#ci-pipeline-super-linter-versus-pre-commit).
 
 **Example output:**
 
@@ -128,8 +128,8 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 
 - `shfmt` - Shell script formatting checker
 - `bash` - Shell syntax validator (usually pre-installed)
-- `markdownlint` - Markdown file linting (**install for MARKDOWN CI parity**)
-- Node.js (`npx`) - Required for Prettier checks in the hook (**install for MARKDOWN_PRETTIER CI parity**)
+- `markdownlint` - Markdown file linting (**install for Markdown CI parity** with the super-linter Markdown job)
+- Node.js (`npx`) - Required for Prettier checks in the hook (**install for Markdown Prettier CI parity**)
 
 ### Installing shellcheck
 
@@ -159,7 +159,7 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 - **Ubuntu/Debian**: May be available as `node-markdownlint`
 - **Python**: `pip install markdownlint` (or `mdl`)
 
-**Note:** If a tool for a given file type is missing, the hook warns and **skips** that check (for example no `markdownlint` means **MARKDOWN** is not validated locally). Install all recommended tools so local runs match `.github/workflows/lint-extras.yaml` for shell, YAML, and Markdown.
+**Note:** If a tool for a given file type is missing, the hook warns and **skips** that check (for example no `markdownlint` means **Markdown** is not validated locally). Install all recommended tools so local runs match `.github/workflows/lint-extras.yaml` for shell, YAML, and Markdown.
 
 ## Testing Hooks Locally
 
@@ -292,18 +292,18 @@ GitHub Actions runs **super-linter/slim@v7** (workflow: `.github/workflows/lint-
 
 | CI (super-linter)     | What it is                                                                 | Local equivalent in `scripts/hooks/pre-commit`                                                                     |
 | --------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **MARKDOWN**          | [markdownlint](https://github.com/DavidAnson/markdownlint) rules on `*.md` | `markdownlint -c .markdownlint.yaml <file>` (same rules as super-linter v7 template) on each **staged** `.md` file |
-| **MARKDOWN_PRETTIER** | [Prettier](https://prettier.io/) check on `*.md`                           | `npx prettier@3.5.3 --check <file>` on each staged `.md` file (same major as the image used in CI)                 |
-| **NATURAL_LANGUAGE**  | textlint terminology rules                                                 | **Not** run in the hook; **CI only** unless you run textlint or super-linter yourself                              |
+| **Markdown**          | [markdownlint](https://github.com/DavidAnson/markdownlint) rules on `*.md` | `markdownlint -c .markdownlint.yaml <file>` (same rules as super-linter v7 template) on each **staged** `.md` file |
+| **Markdown Prettier** | [Prettier](https://prettier.io/) check on `*.md`                           | `npx prettier@3.5.3 --check <file>` on each staged `.md` file (same major as the image used in CI)                 |
+| **Natural language**  | textlint terminology rules                                                 | **Not** run in the hook; **CI only** unless you run textlint or super-linter yourself                              |
 
 YAML re-linting is covered locally with `yamllint`; the workflow sets `VALIDATE_YAML: false` and relies on the separate yamllint workflow where applicable—follow repository CI for the authoritative set.
 
-### Why MARKDOWN / MARKDOWN_PRETTIER can fail in CI even when the hook did not stop you
+### Why Markdown and Prettier checks can fail in CI even when the hook did not stop you
 
 1. **Staged files only** — The hook lints Markdown that is **staged** for the commit. Unstaged edits, fixes done after commit, or files changed only on the remote branch are still validated in CI for the pull request.
 2. **Missing local tools** — If `markdownlint` or `npx` (Node.js) is not installed, the hook prints a warning and **skips** that check. Other tools (for example shellcheck) can still run, so the commit may succeed without any Markdown validation.
 3. **`git commit --no-verify`** — Skips the entire hook; CI still runs.
-4. **NATURAL_LANGUAGE** — Terminology issues (for example “repo” vs “repository”) are **not** caught by the hook; they appear in CI until you fix them or run textlint/super-linter locally.
+4. **Natural language** — Terminology issues (for example informal shorthand instead of “repository”) are **not** caught by the hook; they appear in CI until you fix them or run textlint/super-linter locally.
 5. **Scope** — CI validates the changes in the PR branch; a file you rarely touch can fail the first time it is included in a PR.
 
 ### Commands to mirror CI before pushing
@@ -322,9 +322,9 @@ git ls-files -z '*.md' \
   | xargs -0 markdownlint -c .markdownlint.yaml
 ```
 
-To auto-fix formatting on those files: pipe the same `git ls-files …` list to `xargs -0 npx --yes prettier@3.5.3 --write`. Fix remaining markdownlint issues by editing.
+To autofix formatting on those files: pipe the same `git ls-files …` list to `xargs -0 npx --yes prettier@3.5.3 --write`. Fix remaining markdownlint issues by editing.
 
-**Key takeaway:** Install **markdownlint**, **Node.js (`npx`)**, and the other tools listed under [Requirements](#requirements), run `./scripts/setup-hooks.sh`, and avoid `--no-verify` if you want local commits to match **MARKDOWN** and **MARKDOWN_PRETTIER** in CI. Add textlint or run super-linter locally for **NATURAL_LANGUAGE** parity.
+**Key takeaway:** Install **markdownlint**, **Node.js (`npx`)**, and the other tools listed under [Requirements](#requirements), run `./scripts/setup-hooks.sh`, and avoid `--no-verify` if you want local commits to match **Markdown** and **Markdown Prettier** checks in CI. Add textlint or run super-linter locally for **natural language** parity.
 
 ## Contributing
 

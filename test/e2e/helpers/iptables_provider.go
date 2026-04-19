@@ -194,6 +194,8 @@ func (p *IptablesFaultProvider) FenceIP(ctx context.Context, targetCIDR string, 
 	if err := p.syncFenceStateConfigMap(ctx); err != nil {
 		Logf("[WARNING]", "post-fence sync fence state ConfigMap (may fail if API path is blocked): %v", err)
 	}
+	// This event records success of the iptables fencing step (executeIptablesCommand for "fence"), not the
+	// post-fence ConfigMap sync. ConfigMap update may fail; that case is handled by the Logf immediately above.
 	p.emitIptablesFenceEvent(ctx, EventReasonIptablesFenceApplied, fmt.Sprintf(
 		"Applied OUTPUT+FORWARD REJECT to %s (workload namespace %q). State: kubectl -n %s get configmap %s -o yaml",
 		targetCIDR, p.config.Namespace, p.dsNamespace, IptablesFenceStateConfigMapName))
@@ -207,6 +209,14 @@ func (p *IptablesFaultProvider) FenceIP(ctx context.Context, targetCIDR string, 
 	return nil
 }
 
+// UnfenceIP removes OUTPUT/FORWARD REJECT rules for targetCIDR from iptables manager DaemonSet pods.
+//
+// Error handling: if executeIptablesCommand fails (e.g. remote exec error on one node after succeeding on others),
+// targetCIDR remains in activeFenceRules so callers can retry. A best-effort staged REJECT sweep runs to strip
+// CSI-Addons icmp-host-unreachable rules on all manager pods and reduce leftover partition state. Tests should
+// still register DeferCleanup with PeerFenceProvider.Cleanup (full unfence of tracked CIDRs, staged sweep,
+// ConfigMap teardown, optional DS delete when owned)—not only a loop of UnfenceIP by CIDR—so teardown matches
+// L1-E-003 and survives partial failures.
 func (p *IptablesFaultProvider) UnfenceIP(ctx context.Context, targetCIDR string, params map[string]string) error {
 	clusterContext := p.getClusterContext()
 	Logf("[INFO]", "[%s] UnfenceIP: removing iptables block for CIDR %s (DaemonSet %s)", clusterContext, targetCIDR, IptablesDaemonSetName)
@@ -221,11 +231,17 @@ func (p *IptablesFaultProvider) UnfenceIP(ctx context.Context, targetCIDR string
 	Logf("[DEBUG]", "[%s] Removing iptables fence rule for CIDR %s from DaemonSet pods", clusterContext, targetCIDR)
 	if err := p.executeIptablesCommand(ctx, targetCIDR, "unfence"); err != nil {
 		Logf("[ERROR]", "[%s] Failed to add iptables unfence rule for IP %s to DaemonSet %s: %v", clusterContext, targetCIDR, IptablesDaemonSetName, err)
+		if sweepErr := p.removeCSIAddonsStagedRejectRulesOnAllManagerPods(ctx); sweepErr != nil {
+			Logf("[WARNING]", "best-effort staged REJECT sweep after unfence exec error: %v", sweepErr)
+		} else {
+			Logf("[INFO]", "best-effort staged REJECT sweep ran after unfence exec error (may have cleared rules on remaining nodes)")
+		}
 		return fmt.Errorf("[%s] failed to add iptables unfence rule to %s: %w", clusterContext, IptablesDaemonSetName, err)
 	}
 
 	p.removeFromActiveRules(targetCIDR)
 
+	// Event reflects iptables unfence success above, not ConfigMap sync (may warn below).
 	p.emitIptablesFenceEvent(ctx, EventReasonIptablesFenceRemoved, fmt.Sprintf(
 		"Removed OUTPUT+FORWARD REJECT for %s (workload namespace %q)", targetCIDR, p.config.Namespace))
 	if err := p.syncFenceStateConfigMap(ctx); err != nil {
@@ -397,6 +413,14 @@ func (p *IptablesFaultProvider) fetchProbeJobLogs(ctx context.Context, namespace
 		return "", fmt.Errorf("get pod logs %s: %w", podName, err)
 	}
 	return string(raw), nil
+}
+
+// SweepResidualFenceRules runs the same best-effort cleanup as the staged REJECT sweep at the end of
+// Cleanup (removeCSIAddonsStagedRejectRulesOnAllManagerPods). Call after UnfenceIP when replication
+// or resync must proceed on the data path: per-pod iptables -D can miss rules on some nodes, or
+// nft/legacy quirks can leave matching REJECT lines until this sweep runs.
+func (p *IptablesFaultProvider) SweepResidualFenceRules(ctx context.Context) error {
+	return p.removeCSIAddonsStagedRejectRulesOnAllManagerPods(ctx)
 }
 
 func (p *IptablesFaultProvider) Cleanup(ctx context.Context) error {
@@ -759,7 +783,7 @@ func (p *IptablesFaultProvider) tryAdoptExistingDaemonSet(ctx context.Context) (
 	return false, nil
 }
 
-// deployDaemonSet creates and deploys the iptables management DaemonSet and ConfigMap
+// deployDaemonSet creates the iptables DaemonSet only (no rules ConfigMap; see IptablesFenceStateConfigMapName for runtime CM).
 func (p *IptablesFaultProvider) deployDaemonSet(ctx context.Context) error {
 	clusterContext := p.getClusterContext()
 
@@ -864,17 +888,9 @@ func (p *IptablesFaultProvider) createIptablesDaemonSet() *appsv1.DaemonSet {
 
 	const templatePath = "templates/iptables-daemonset.yaml"
 	daemonSet := &appsv1.DaemonSet{}
-	Logf("[DEBUG]", "About to render DaemonSet template: %s", templatePath)
 	if err := p.renderTemplate(templatePath, data, daemonSet); err != nil {
 		Logf("[ERROR]", "Failed to render DaemonSet template: %v", err)
 		return daemonSet // Return empty DaemonSet instead of panicking
-	}
-	Logf("[DEBUG]", "Successfully rendered DaemonSet template")
-
-	// Debug: Log the rendered DaemonSet volumes
-	Logf("[DEBUG]", "DaemonSet volumes count: %d", len(daemonSet.Spec.Template.Spec.Volumes))
-	for i, vol := range daemonSet.Spec.Template.Spec.Volumes {
-		Logf("[DEBUG]", "Volume %d: %s", i, vol.Name)
 	}
 
 	return daemonSet
@@ -899,9 +915,6 @@ func (p *IptablesFaultProvider) renderTemplate(templatePath string, data Templat
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
-
-	// Debug: Log the rendered YAML content
-	Logf("[DEBUG]", "Rendered template content:\n%s", buf.String())
 
 	// Decode YAML into the object
 	if err := yaml.Unmarshal(buf.Bytes(), obj); err != nil {
@@ -1422,7 +1435,8 @@ func (p *IptablesFaultProvider) cleanupAllFenceRules(ctx context.Context, ds *ap
 	return nil
 }
 
-// createCleanupJob runs cleanup only by exec into the DaemonSet pod (same as fence/unfence).
+// createCleanupJob runs cleanup by remote exec into the DaemonSet pod (same transport as fence/unfence).
+// Despite the name, this does not create a batch/v1 Job.
 func (p *IptablesFaultProvider) createCleanupJob(ctx context.Context, targetPod *corev1.Pod, command string) error {
 	if p.config.RESTConfig == nil {
 		Logf("[WARNING]", "iptables emergency cleanup skipped for pod %s/%s: RESTConfig is nil", targetPod.Namespace, targetPod.Name)

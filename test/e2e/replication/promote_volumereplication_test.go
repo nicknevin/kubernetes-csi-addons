@@ -19,7 +19,6 @@ package replication
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,44 +27,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
 	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
-
-// establishIptablesFenceBaselines records which probes (ping / ip route) succeed before fencing.
-// Skips only when the cluster path to the peer is unusable for baseline (no probe succeeded — e.g. ICMP blocked everywhere).
-// Timeouts, API errors, or missing CSI_BASELINE are test/infrastructure failures and fail the spec (not Skip).
-func establishIptablesFenceBaselines(ctx context.Context, faultProvider helpers.PeerFenceProvider, cidrs []string) map[string]*helpers.ConnectivityBaseline {
-	if helpers.GetFaultInjectorTypeFromEnv() != helpers.FaultInjectorIptables {
-		return nil
-	}
-	out := make(map[string]*helpers.ConnectivityBaseline, len(cidrs))
-	for _, cidr := range cidrs {
-		b, err := faultProvider.EstablishConnectivityBaseline(ctx, cidr)
-		if err != nil {
-			if iptablesBaselineErrIsSkipEnvironment(err) {
-				Skip("fence baseline: " + err.Error())
-			}
-			Fail(fmt.Sprintf("fence baseline failed (expected reachable path to peer before fence; fix probe/job or networking): %v", err), 1)
-		}
-		out[cidr] = b
-	}
-	return out
-}
-
-func iptablesBaselineErrIsSkipEnvironment(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "no probe succeeded") ||
-		strings.Contains(msg, "cannot verify fencing")
-}
-
-func fenceBaselineRef(m map[string]*helpers.ConnectivityBaseline, cidr string) *helpers.ConnectivityBaseline {
-	if m == nil {
-		return nil
-	}
-	return m[cidr]
-}
 
 var _ = Describe("PromoteVolumeReplication", func() {
 	var ctx context.Context
@@ -126,13 +90,8 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
-
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf, vrDR2)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -445,22 +404,13 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			var cidrs []string
 
 			DeferCleanup(func() {
-				cleanupCtx := context.Background() // Collect fault injection logs for debugging before cleanup
-				if faultProvider != nil {
-					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
-						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-004 cleanup: %v", err)
-					}
-				} // Collect fault injection logs for debugging before cleanup
+				cleanupCtx := context.Background()
 				if faultProvider != nil {
 					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
 						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-003 cleanup: %v", err)
 					}
-				}
-				// Clean up any remaining fences during cleanup
-				if faultProvider != nil && len(cidrs) > 0 {
-					for _, cidr := range cidrs {
-						_ = faultProvider.UnfenceIP(cleanupCtx, cidr, nil)
-					}
+					// Full provider teardown: unfence tracked CIDRs, staged REJECT sweep, ConfigMap — not only per-CIDR UnfenceIP.
+					_ = faultProvider.Cleanup(cleanupCtx)
 				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
@@ -477,7 +427,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			if helpers.GetFaultInjectorTypeFromEnv() == helpers.FaultInjectorIptables {
 				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
 			} else {
-				cidrs = GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
+				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
 			}
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-003 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
@@ -487,20 +437,24 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Initializing fault injection provider")
 			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
-				Type:      helpers.FaultInjectorIptables,
-				Client:    cDR2,
-				Namespace: nsName,
+				Type:       helpers.GetFaultInjectorTypeFromEnv(),
+				Client:     cDR2,
+				RESTConfig: GetRESTConfigDR2(),
+				Namespace:  nsName,
 				ProviderParams: map[string]string{
-					"image": helpers.DefaultIptablesImageWithRegistry,
+					"provisioner":     env.Provisioner,
+					"cluster_context": "DR2",
+					"image":           helpers.DefaultIptablesImageWithRegistry,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
 
-			fenceBaselines := establishIptablesFenceBaselines(ctx, faultProvider, cidrs)
+			fenceBaselines := IptablesBaselinesOrGinkgoSkip(ctx, helpers.GetFaultInjectorTypeFromEnv(), faultProvider, cidrs)
 
+			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
 			By("[DR2] Fencing peer cluster to simulate network partition")
 			for _, cidr := range cidrs {
-				err = faultProvider.FenceIP(ctx, cidr, nil)
+				err = faultProvider.FenceIP(ctx, cidr, fenceParams)
 				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
 			}
 
@@ -509,7 +463,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Eventually(func() bool {
 				lastFenceVerifyReason = ""
 				for _, cidr := range cidrs {
-					fenced, err := faultProvider.VerifyConnectivity(ctx, cidr, true, fenceBaselineRef(fenceBaselines, cidr))
+					fenced, err := faultProvider.VerifyConnectivity(ctx, cidr, true, helpers.BaselineForCIDR(fenceBaselines, cidr))
 					if err != nil {
 						lastFenceVerifyReason = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
 						return false
@@ -546,7 +500,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Unfencing peer cluster to restore connectivity")
 			for _, cidr := range cidrs {
-				err = faultProvider.UnfenceIP(ctx, cidr, nil)
+				err = faultProvider.UnfenceIP(ctx, cidr, fenceParams)
 				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
 			}
 
@@ -555,7 +509,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Eventually(func() bool {
 				lastUnfenceVerifyReason003 = ""
 				for _, cidr := range cidrs {
-					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, fenceBaselineRef(fenceBaselines, cidr))
+					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, helpers.BaselineForCIDR(fenceBaselines, cidr))
 					if err != nil {
 						lastUnfenceVerifyReason003 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
 						return false
@@ -667,13 +621,14 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
-
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf, vrDR2)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-004 cleanup: %v", err)
+					}
+					_ = faultProvider.Cleanup(cleanupCtx)
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -687,10 +642,12 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Initializing fault injection provider")
 			faultConfig := helpers.FaultInjectionConfig{
-				Type:      helpers.FaultInjectorIptables,
-				Client:    cDR2,
-				Namespace: nsName,
+				Type:       helpers.GetFaultInjectorTypeFromEnv(),
+				Client:     cDR2,
+				RESTConfig: GetRESTConfigDR2(),
+				Namespace:  nsName,
 				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
 					"cluster_context": "DR2", // Help identify which cluster this is
 					"image":           helpers.DefaultIptablesImageWithRegistry,
 				},
@@ -703,17 +660,18 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			if helpers.GetFaultInjectorTypeFromEnv() == helpers.FaultInjectorIptables {
 				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
 			} else {
-				cidrs = GetFenceCIDRs(ctx, cDR1, env.Provisioner, "temp-nfc-"+nsName)
+				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
 			}
 			if len(cidrs) == 0 {
 				Skip("L1-PROM-004 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
 			}
 
-			fenceBaselines := establishIptablesFenceBaselines(ctx, faultProvider, cidrs)
+			fenceBaselines := IptablesBaselinesOrGinkgoSkip(ctx, helpers.GetFaultInjectorTypeFromEnv(), faultProvider, cidrs)
 
+			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
 			By("[DR2] Fencing peer cluster to block access")
 			for _, cidr := range cidrs {
-				err = faultProvider.FenceIP(ctx, cidr, nil)
+				err = faultProvider.FenceIP(ctx, cidr, fenceParams)
 				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
 			}
 
@@ -748,7 +706,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 
 			By("[DR2] Unfencing peer cluster to restore connectivity")
 			for _, cidr := range cidrs {
-				err = faultProvider.UnfenceIP(ctx, cidr, nil)
+				err = faultProvider.UnfenceIP(ctx, cidr, fenceParams)
 				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
 			}
 
@@ -757,7 +715,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Eventually(func() bool {
 				lastUnfenceVerifyReason004 = ""
 				for _, cidr := range cidrs {
-					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, fenceBaselineRef(fenceBaselines, cidr))
+					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, helpers.BaselineForCIDR(fenceBaselines, cidr))
 					if err != nil {
 						lastUnfenceVerifyReason004 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
 						return false
@@ -804,8 +762,6 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			By("Assertions: L1-PROM-004 — VR remains stable after unfence")
 			Expect(vrDR2.Status.State).To(Or(Equal(replicationv1alpha1.PrimaryState), Equal(replicationv1alpha1.UnknownState)),
 				"L1-PROM-004: VR state should remain Primary or Unknown after unfence, got %q", vrDR2.Status.State)
-
-			DeleteNetworkFenceWithCleanup(ctx, cDR2, nf)
 		})
 	})
 

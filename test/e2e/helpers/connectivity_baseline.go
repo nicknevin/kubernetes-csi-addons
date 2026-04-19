@@ -11,10 +11,63 @@ ConnectivityBaseline and CompareProbeResultsToBaseline are used only by the ipta
 package helpers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 )
+
+// ErrIptablesBaselineSkipEnvironment is returned by EstablishIptablesConnectivityBaselines when
+// probe jobs cannot establish a baseline (e.g. no probe succeeded — ICMP blocked everywhere).
+// Replication E2E specs may translate this with Ginkgo Skip; helpers must not import Ginkgo.
+var ErrIptablesBaselineSkipEnvironment = errors.New("iptables connectivity baseline: environment unsuitable for verify")
+
+// IsIptablesBaselineSkipEnvironmentError reports whether err indicates the cluster cannot run
+// iptables connectivity verification (matches errors from IptablesFaultProvider.EstablishConnectivityBaseline).
+func IsIptablesBaselineSkipEnvironmentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no probe succeeded") ||
+		strings.Contains(msg, "cannot verify fencing")
+}
+
+// EstablishIptablesConnectivityBaselines runs EstablishConnectivityBaseline for each CIDR when
+// injectorType is iptables. For other injectors returns (nil, nil) without calling the provider
+// (NetworkFence and NoOp do not use packet baselines).
+//
+// On failure: wraps with ErrIptablesBaselineSkipEnvironment when IsIptablesBaselineSkipEnvironmentError(err);
+// otherwise returns a fatal error (timeouts, API errors, missing CSI_BASELINE).
+func EstablishIptablesConnectivityBaselines(ctx context.Context, injectorType FaultInjectorType, p PeerFenceProvider, cidrs []string) (map[string]*ConnectivityBaseline, error) {
+	if injectorType != FaultInjectorIptables {
+		return nil, nil
+	}
+	if p == nil {
+		return nil, fmt.Errorf("EstablishIptablesConnectivityBaselines: PeerFenceProvider is required for iptables")
+	}
+	out := make(map[string]*ConnectivityBaseline, len(cidrs))
+	for _, cidr := range cidrs {
+		b, err := p.EstablishConnectivityBaseline(ctx, cidr)
+		if err != nil {
+			if IsIptablesBaselineSkipEnvironmentError(err) {
+				return nil, fmt.Errorf("%w: %v", ErrIptablesBaselineSkipEnvironment, err)
+			}
+			return nil, fmt.Errorf("fence baseline failed (expected reachable path to peer before fence; fix probe/job or networking): %w", err)
+		}
+		out[cidr] = b
+	}
+	return out, nil
+}
+
+// BaselineForCIDR returns the per-CIDR baseline from EstablishIptablesConnectivityBaselines for VerifyConnectivity, or nil.
+func BaselineForCIDR(baselines map[string]*ConnectivityBaseline, cidr string) *ConnectivityBaseline {
+	if baselines == nil {
+		return nil
+	}
+	return baselines[cidr]
+}
 
 // CompareProbeResultsToBaseline returns whether current probes match expected fence state.
 // When expectedFenced is true, probes that were true in baseline must be false after, with

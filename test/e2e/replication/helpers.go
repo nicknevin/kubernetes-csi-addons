@@ -18,6 +18,7 @@ package replication
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"os"
@@ -39,6 +40,7 @@ import (
 
 	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	e2ehelpers "github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
 
 const (
@@ -1647,4 +1649,18 @@ func DeleteNetworkFenceClassWithCleanup(ctx context.Context, c client.Client, nf
 	if err := c.Get(ctx, key, nfc); err == nil {
 		RemoveFinalizerFromNetworkFenceClass(ctx, c, nfc)
 	}
+}
+
+// IptablesBaselinesOrGinkgoSkip runs e2ehelpers.EstablishIptablesConnectivityBaselines and maps the result to
+// ginkgo Skip or Fail. Baseline rules live in test/e2e/helpers; this function lives in package replication
+// because generic helpers must not import Ginkgo.
+func IptablesBaselinesOrGinkgoSkip(ctx context.Context, injector e2ehelpers.FaultInjectorType, faultProvider e2ehelpers.PeerFenceProvider, cidrs []string) map[string]*e2ehelpers.ConnectivityBaseline {
+	m, err := e2ehelpers.EstablishIptablesConnectivityBaselines(ctx, injector, faultProvider, cidrs)
+	if err != nil {
+		if stderrors.Is(err, e2ehelpers.ErrIptablesBaselineSkipEnvironment) {
+			ginkgo.Skip("fence baseline: " + err.Error())
+		}
+		ginkgo.Fail(fmt.Sprintf("fence baseline: %v", err), 1)
+	}
+	return m
 }

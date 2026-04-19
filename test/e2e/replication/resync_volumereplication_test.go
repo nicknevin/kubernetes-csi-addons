@@ -27,12 +27,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
 
-// hasVolumeReplicationCompletedCondition checks if VR has Completed=True condition.
-// This is used for resync operations where the state remains Secondary but Completed=True signals completion.
+// hasVolumeReplicationCompletedCondition is true when ConditionCompleted has Status=True.
+//
+// This is not sufficient to mean “resync is done”: after a successful ResyncVolume RPC the controller
+// runs setResyncCondition (internal/controller/replication.storage/status.go), which sets
+// ConditionCompleted=True (Reason Demoted) at the same time as ConditionResyncing=True until the CSI
+// driver reports Ready (ResyncVolumeResponse.ready). So Completed=True with Resyncing=True is normal
+// while the mirror catches up. Failed resync uses setFailedResyncCondition (Completed=False, Resyncing=False).
 func hasVolumeReplicationCompletedCondition(vr *replicationv1alpha1.VolumeReplication) bool {
 	for _, cond := range vr.Status.Conditions {
 		if cond.Type == replicationv1alpha1.ConditionCompleted && cond.Status == metav1.ConditionTrue {
@@ -42,9 +47,10 @@ func hasVolumeReplicationCompletedCondition(vr *replicationv1alpha1.VolumeReplic
 	return false
 }
 
-// hasResyncOperationCompleted checks if the resync operation has completed (Resyncing=False).
-// This is the key indicator that the resync RPC call finished, regardless of Degraded state.
-// After resync completes, Degraded may still be True as the mirror recovers.
+// hasResyncOperationCompleted is true when ConditionResyncing has Status=False (Reason NotResyncing).
+// The controller clears Resyncing after the driver reports resync ready (and applies setNotDegradedCondition),
+// or on failure via setFailedResyncCondition—pair with hasVolumeReplicationCompletedCondition to tell success
+// (Completed=True) from failure (Completed=False).
 func hasResyncOperationCompleted(vr *replicationv1alpha1.VolumeReplication) bool {
 	for _, cond := range vr.Status.Conditions {
 		if cond.Type == replicationv1alpha1.ConditionResyncing && cond.Status == metav1.ConditionFalse {
@@ -52,6 +58,13 @@ func hasResyncOperationCompleted(vr *replicationv1alpha1.VolumeReplication) bool
 		}
 	}
 	return false
+}
+
+// volumeReplicationResyncWaitSatisfied is the condition these specs use in Eventually: successful resync
+// reconciliation requires Completed=True and Resyncing=False. Do not drop either: Resyncing=False alone would
+// match failed resync (Completed=False).
+func volumeReplicationResyncWaitSatisfied(vr *replicationv1alpha1.VolumeReplication) bool {
+	return hasVolumeReplicationCompletedCondition(vr) && hasResyncOperationCompleted(vr)
 }
 
 var _ = Describe("ResyncVolumeReplication", func() {
@@ -123,13 +136,18 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			Expect(vrDR2.Status.State).To(Equal(replicationv1alpha1.SecondaryState), "Secondary should be in Secondary state")
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(), "Secondary should have success condition")
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
+			var faultProvider helpers.PeerFenceProvider
+			var cidrs []string
+			var fenceBaselines map[string]*helpers.ConnectivityBaseline
 
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						_, _ = fmt.Fprintf(GinkgoWriter, "[WARNING] L1-RSYNC-001 fault injection log collection: %v\n", err)
+					}
+					_ = faultProvider.Cleanup(cleanupCtx)
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -141,27 +159,104 @@ var _ = Describe("ResyncVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("L1-RSYNC-001: Creating NetworkFence to simulate split-brain (isolate secondary)")
-			if !IsNetworkFenceSupportAvailable() {
-				By("L1-RSYNC-001: NetworkFence not supported, simulating split-brain via demotion")
-				_ = cDR1.Get(ctx, client.ObjectKeyFromObject(vrDR1), vrDR1)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  [NOTE] NetworkFence not available; skipping network isolation. Resync will proceed on healthy secondary.\n")
-			} else {
-				By("L1-RSYNC-001: NetworkFence supported, creating fence to simulate split-brain")
-				nfc, nf = CreateNetworkFenceAndWait(ctx, cDR2, nsName, env.Provisioner, secretName, secretNs)
-				By("L1-RSYNC-001: NetworkFence created, secondary is now isolated")
+			injector := helpers.GetFaultInjectorTypeFromEnv()
+			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
+			fenceApplied := false
 
-				By("L1-RSYNC-001: Validating secondary replication state via GetVolumeReplicationInfo (post-fence, degraded)")
+			By("L1-RSYNC-001: Checking fault injection prerequisites (align with L1-PROM-003)")
+			if injector != helpers.FaultInjectorNone && !IsNetworkFenceSupportAvailable() && !helpers.HasPrivilegedDaemonSetSupport(ctx, cDR2) {
+				Skip("L1-RSYNC-001 requires either NetworkFence support or privileged DaemonSet capabilities for fault injection")
+			}
+
+			if injector != helpers.FaultInjectorNone {
+				By("L1-RSYNC-001: Resolving peer fence CIDRs for E2E_FAULT_INJECTOR")
+				if injector == helpers.FaultInjectorIptables {
+					cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
+				} else {
+					cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
+				}
+				if len(cidrs) == 0 {
+					Skip("L1-RSYNC-001 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
+				}
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [L1-RSYNC-001] fencing peer CIDRs (injector=%s): %v\n", injector, cidrs)
+
+				var err error
+				faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+					Type:       injector,
+					Client:     cDR2,
+					RESTConfig: GetRESTConfigDR2(),
+					Namespace:  nsName,
+					ProviderParams: map[string]string{
+						"provisioner":     env.Provisioner,
+						"image":           helpers.DefaultIptablesImageWithRegistry,
+						"cluster_context": "DR2",
+					},
+				})
+				Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider for L1-RSYNC-001")
+
+				fenceBaselines = IptablesBaselinesOrGinkgoSkip(ctx, injector, faultProvider, cidrs)
+
+				By(fmt.Sprintf("L1-RSYNC-001: Fencing peer from DR2 via %s: %v", injector, cidrs))
+				for _, cidr := range cidrs {
+					Expect(faultProvider.FenceIP(ctx, cidr, fenceParams)).To(Succeed(), "FenceIP %s", cidr)
+				}
+				if injector == helpers.FaultInjectorIptables {
+					time.Sleep(5 * time.Second)
+					var lastFenceVerify string
+					Eventually(func() bool {
+						lastFenceVerify = ""
+						for _, cidr := range cidrs {
+							fenced, vErr := faultProvider.VerifyConnectivity(ctx, cidr, true, helpers.BaselineForCIDR(fenceBaselines, cidr))
+							if vErr != nil {
+								lastFenceVerify = fmt.Sprintf("VerifyConnectivity %s: %v", cidr, vErr)
+								return false
+							}
+							if !fenced {
+								lastFenceVerify = fmt.Sprintf("CIDR %s probes still match pre-fence reachability (expected partition)", cidr)
+								return false
+							}
+						}
+						return true
+					}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+						"L1-RSYNC-001: after iptables fence, DR2 must show partition vs baseline (CIDRs %v). %s", cidrs, lastFenceVerify)
+				}
+
+				fenceApplied = true
+				By("L1-RSYNC-001: Validating secondary replication state (post-fence, degraded)")
 				Eventually(func() bool {
 					_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 					_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] post-fence: %s\n", FormatVRStatus(vrDR2))
 					return HasVolumeReplicationErrorCondition(vrDR2)
 				}, 30*time.Second, 2*time.Second).Should(BeTrue(),
-					"Secondary should show error condition after network fence")
+					"Secondary should show error condition after fence")
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [NOTE] L1-RSYNC-001: E2E_FAULT_INJECTOR=none; resync without network isolation.\n")
 			}
 
-			By("L1-RSYNC-001: Removing NetworkFence to resolve split-brain")
-			DeleteNetworkFenceWithCleanup(ctx, cDR2, nf)
+			By("L1-RSYNC-001: Restoring connectivity (unfence) before resync")
+			if faultProvider != nil && fenceApplied {
+				for _, cidr := range cidrs {
+					Expect(faultProvider.UnfenceIP(ctx, cidr, fenceParams)).To(Succeed(), "UnfenceIP %s", cidr)
+				}
+				var lastUnfence string
+				Eventually(func() bool {
+					lastUnfence = ""
+					for _, cidr := range cidrs {
+						ok, vErr := faultProvider.VerifyConnectivity(ctx, cidr, false, helpers.BaselineForCIDR(fenceBaselines, cidr))
+						if vErr != nil {
+							lastUnfence = fmt.Sprintf("VerifyConnectivity %s: %v", cidr, vErr)
+							return false
+						}
+						if !ok {
+							lastUnfence = fmt.Sprintf("CIDR %s not yet matching reachable baseline after unfence", cidr)
+							return false
+						}
+					}
+					return true
+				}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
+					"L1-RSYNC-001: after unfence, DR2 connectivity must match pre-fence reachability (CIDRs %v). %s", cidrs, lastUnfence)
+				helpers.SweepIptablesResidualAfterUnfence(ctx, injector, faultProvider)
+			}
 			By("L1-RSYNC-001: Triggering resync by updating VR to Resync state")
 			err := cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 			Expect(err).NotTo(HaveOccurred())
@@ -169,13 +264,13 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred(), "Failed to update VR replicationState to Resync")
 
-			By("Waiting for VR to complete resync (checking Completed condition)")
+			By("Waiting for VR resync: Resyncing=False and Completed=True (Completed may stay True while Resyncing=True until driver reports ready)")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
-				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync in progress: %s\n", FormatVRStatus(vrDR2))
-				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
+				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync poll: %s\n", FormatVRStatus(vrDR2))
+				return volumeReplicationResyncWaitSatisfied(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue(),
-				"VR Completed condition should be True and Resyncing=False after resync")
+				"expect Resyncing=False and Completed=True after resync (Resyncing=True with Completed=True means still catching up)")
 
 			By("L1-RSYNC-001: Assertion — data consistency confirmed")
 			_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
@@ -251,11 +346,11 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Waiting for first resync to complete (checking Completed condition)")
+			By("Waiting for first resync: Resyncing=False and Completed=True")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] first resync: %s\n", FormatVRStatus(vrDR2))
-				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
+				return volumeReplicationResyncWaitSatisfied(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-002: Assertion — data consistency after first resync")
@@ -270,11 +365,11 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Waiting for second resync to complete (checking Completed condition)")
+			By("Waiting for second resync: Resyncing=False and Completed=True")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] second resync: %s\n", FormatVRStatus(vrDR2))
-				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
+				return volumeReplicationResyncWaitSatisfied(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-002: Assertion — data consistency after second resync")
@@ -286,10 +381,21 @@ var _ = Describe("ResyncVolumeReplication", func() {
 
 	Describe("L1-RSYNC-003: Resync with NetworkFence (split-brain recovery)", func() {
 		It("L1-RSYNC-003: resync with secondary network-fenced (split-brain), expect resync completes after fence removal", func() {
-			By("L1-RSYNC-003: Create primary and secondary, apply NetworkFence, resolve, then resync")
+			By("L1-RSYNC-003: Create primary and secondary, apply fault injection fence on DR2, resolve, then resync")
 			SkipIfNotFullDR("L1-RSYNC-003", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
-			if !IsNetworkFenceSupportAvailable() {
-				Skip("L1-RSYNC-003: NetworkFence not supported on this setup")
+			injector := helpers.GetFaultInjectorTypeFromEnv()
+			if injector == helpers.FaultInjectorNone {
+				Skip("L1-RSYNC-003 requires fault injection (E2E_FAULT_INJECTOR=iptables|networkfence)")
+			}
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				if !IsNetworkFenceSupportAvailable() {
+					Skip("L1-RSYNC-003 (networkfence) requires NetworkFence support on this setup")
+				}
+			case helpers.FaultInjectorIptables:
+				if !helpers.HasPrivilegedDaemonSetSupport(ctx, GetK8sClientForCluster(ClusterDR2)) {
+					Skip("L1-RSYNC-003 (iptables) requires privileged DaemonSet support on DR2")
+				}
 			}
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
@@ -328,13 +434,15 @@ var _ = Describe("ResyncVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
+			var faultProvider helpers.PeerFenceProvider
+			var cidrs []string
 
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
+				if faultProvider != nil {
+					_ = helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider)
+					_ = faultProvider.Cleanup(cleanupCtx)
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -346,8 +454,39 @@ var _ = Describe("ResyncVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("L1-RSYNC-003: Creating NetworkFence to isolate secondary")
-			nfc, nf = CreateNetworkFenceAndWait(ctx, cDR2, nsName, env.Provisioner, secretName, secretNs)
+			var err error
+			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+				Type:       injector,
+				Client:     cDR2,
+				RESTConfig: GetRESTConfigDR2(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
+					"image":           helpers.DefaultIptablesImageWithRegistry,
+					"cluster_context": "DR2",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider")
+			if !faultProvider.IsSupported(ctx) {
+				Skip(fmt.Sprintf("L1-RSYNC-003 (%s): fault injection not supported on this cluster", injector))
+			}
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
+			case helpers.FaultInjectorIptables:
+				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
+			}
+			if len(cidrs) == 0 {
+				Skip("L1-RSYNC-003 could not get fence CIDRs (set FENCE_CIDRS or discovery env vars)")
+			}
+			fp := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
+			By(fmt.Sprintf("L1-RSYNC-003: Fencing peer from DR2 via %s: %v", injector, cidrs))
+			for _, cidr := range cidrs {
+				Expect(faultProvider.FenceIP(ctx, cidr, fp)).To(Succeed(), "FenceIP %s", cidr)
+			}
+			if injector == helpers.FaultInjectorIptables {
+				time.Sleep(5 * time.Second)
+			}
 
 			By("L1-RSYNC-003: Validating secondary is fenced (split-brain state)")
 			Eventually(func() bool {
@@ -357,21 +496,24 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			}, 30*time.Second, 2*time.Second).Should(BeTrue(),
 				"Secondary should show error after fence applied")
 
-			By("L1-RSYNC-003: Removing NetworkFence to resolve split-brain")
-			DeleteNetworkFenceWithCleanup(ctx, cDR2, nf)
+			By("L1-RSYNC-003: Unfencing peer before resync")
+			for _, cidr := range cidrs {
+				Expect(faultProvider.UnfenceIP(ctx, cidr, fp)).To(Succeed(), "UnfenceIP %s", cidr)
+			}
+			helpers.SweepIptablesResidualAfterUnfence(ctx, injector, faultProvider)
 
 			By("L1-RSYNC-003: Triggering resync after split-brain recovery")
-			err := cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
+			err = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Resync
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Waiting for resync to complete (checking Completed condition)")
+			By("Waiting for resync: Resyncing=False and Completed=True")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] resync: %s\n", FormatVRStatus(vrDR2))
-				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
+				return volumeReplicationResyncWaitSatisfied(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-003: Assertion — data consistency after resync")
@@ -442,11 +584,11 @@ var _ = Describe("ResyncVolumeReplication", func() {
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred(), "Failed to update VR to Resync state")
 
-			By("Waiting for resync to complete (checking Completed condition)")
+			By("Waiting for resync: Resyncing=False and Completed=True")
 			Eventually(func() bool {
 				_ = cDR2.Get(ctx, client.ObjectKeyFromObject(vrDR2), vrDR2)
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] force-resync: %s\n", FormatVRStatus(vrDR2))
-				return hasVolumeReplicationCompletedCondition(vrDR2) && hasResyncOperationCompleted(vrDR2)
+				return volumeReplicationResyncWaitSatisfied(vrDR2)
 			}, 5*time.Minute, 5*time.Second).Should(BeTrue())
 
 			By("L1-RSYNC-004: Assertion — data consistency after force resync")

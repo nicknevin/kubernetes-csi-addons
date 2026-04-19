@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
 	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
@@ -172,61 +171,47 @@ var _ = Describe("EnableVolumeReplication", func() {
 			By("Creating VolumeReplicationClass (snapshot) " + vrcName)
 			vrc := CreateVolumeReplicationClass(ctx, c, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
 
-			var (
-				nfc *csiaddonsv1alpha1.NetworkFenceClass
-				nf  *csiaddonsv1alpha1.NetworkFence
-			)
-			var faultProvider helpers.PeerFenceProvider
-			var cidrs []string
+			faultProvider, err := helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+				Type:       injector,
+				Client:     c,
+				RESTConfig: GetRESTConfig(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner": env.Provisioner,
+					"image":       helpers.DefaultIptablesImageWithRegistry,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider")
+			if !faultProvider.IsSupported(ctx) {
+				Skip(fmt.Sprintf("L1-E-003 (%s): fault injection provider not supported on this cluster", injector))
+			}
 
+			var cidrs []string
 			switch injector {
 			case helpers.FaultInjectorNetworkFence:
-				nfcName := "nfc-fence-" + nsName
-				By("Creating NetworkFenceClass " + nfcName + " (same provisioner and secret as VRC)")
-				nfc = CreateNetworkFenceClass(ctx, c, nfcName, env.Provisioner, secretName, secretNs)
-
-				By("Getting fence CIDRs (from FENCE_CIDRS env, CSIAddonsNode status, or node InternalIPs)")
-				cidrs = GetFenceCIDRs(ctx, c, env.Provisioner, nfcName)
-				if len(cidrs) == 0 {
-					Skip("L1-E-003 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure nodes have InternalIPs for NetworkFence fallback")
-				}
-
-				nfName := "nf-fence-" + nsName
-				By("Creating NetworkFence (Fenced) to block node access " + nfName)
-				nf = CreateNetworkFence(ctx, c, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-				By("Waiting for NetworkFence to report Succeeded")
-				WaitForNetworkFenceResult(ctx, c, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
-
+				By("Getting fence CIDRs (from FENCE_CIDRS env, CSIAddonsNode status for any class, or node InternalIPs)")
+				cidrs = GetFenceCIDRs(ctx, c, env.Provisioner, "")
 			case helpers.FaultInjectorIptables:
-				var err error
-				faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
-					Client:     c,
-					RESTConfig: GetRESTConfig(),
-					Namespace:  nsName,
-					ProviderParams: map[string]string{
-						"provisioner": env.Provisioner,
-						"image":       helpers.DefaultIptablesImageWithRegistry,
-					},
-				})
-				Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider")
-				if !faultProvider.IsSupported(ctx) {
-					Skip("L1-E-003 (iptables): fault injection provider not supported on this cluster")
-				}
-
 				By("Getting fence CIDRs for iptables (FENCE_CIDRS; full-DR: peer backends from FENCE_PEER_SERVICES or FENCE_TARGET_SERVICES on DR2)")
 				if IsFullDRMode() {
 					cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, GetK8sClientForCluster(ClusterDR1), GetK8sClientForCluster(ClusterDR2))
 				} else {
 					cidrs = GetFenceCIDRsForFaultInjection(ctx, c)
 				}
-				if len(cidrs) == 0 {
-					Skip("L1-E-003 could not get CIDRs for iptables: set FENCE_CIDRS, or FENCE_TARGET_SERVICES (e.g. rook-ceph/rook-ceph-active-mons); with DR1+DR2, services are resolved on the peer cluster")
-				}
+			}
+			if len(cidrs) == 0 {
+				Skip("L1-E-003 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or use FENCE_TARGET_SERVICES / node discovery per docs/testing/replication-e2e-suite.md")
+			}
 
-				By(fmt.Sprintf("Fencing peer CIDRs via iptables: %v", cidrs))
-				for _, cidr := range cidrs {
-					Expect(faultProvider.FenceIP(ctx, cidr, nil)).To(Succeed(), "FenceIP %s", cidr)
-				}
+			fenceParams := map[string]string{
+				"secretName":      secretName,
+				"secretNamespace": secretNs,
+			}
+			By(fmt.Sprintf("Fencing peer CIDRs via %s: %v", injector, cidrs))
+			for _, cidr := range cidrs {
+				Expect(faultProvider.FenceIP(ctx, cidr, fenceParams)).To(Succeed(), "FenceIP %s", cidr)
+			}
+			if injector == helpers.FaultInjectorIptables {
 				time.Sleep(5 * time.Second)
 			}
 
@@ -236,18 +221,11 @@ var _ = Describe("EnableVolumeReplication", func() {
 
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				if injector == helpers.FaultInjectorNetworkFence && nf != nil {
-					// Unfence first so RBD mirroring can recover before VR/PVC cleanup.
-					DeleteNetworkFenceWithCleanup(cleanupCtx, c, nf)
-				}
 				if faultProvider != nil {
 					_ = helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider)
 					_ = faultProvider.Cleanup(cleanupCtx)
 				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, c, vr)
-				if nfc != nil {
-					DeleteNetworkFenceClassWithCleanup(cleanupCtx, c, nfc)
-				}
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, c, vrc)
 				DeletePVCWithCleanup(cleanupCtx, c, pvc)
 				DeleteNamespace(cleanupCtx, c, ns)
@@ -255,22 +233,16 @@ var _ = Describe("EnableVolumeReplication", func() {
 
 			By("Waiting for VR to report error (peer unreachable)")
 			WaitForVolumeReplicationError(ctx, c, vr)
-			err := c.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrName}, vr)
+			err = c.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrName}, vr)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Assertions: GetVolumeReplicationInfo (L1-INFO-005) — peer unreachable returns error in VR status")
 			Expect(hasVolumeReplicationErrorCondition(vr)).To(BeTrue(),
 				"GetVolumeReplicationInfo (L1-INFO-005): VR with fenced/peer unreachable must have error (message or degraded condition)")
 
-			switch injector {
-			case helpers.FaultInjectorNetworkFence:
-				By("Unfencing by setting fenceState to Unfenced")
-				UnfenceNetworkFence(ctx, c, nf)
-			case helpers.FaultInjectorIptables:
-				By("Unfencing by removing iptables rules")
-				for _, cidr := range cidrs {
-					Expect(faultProvider.UnfenceIP(ctx, cidr, nil)).To(Succeed(), "UnfenceIP %s", cidr)
-				}
+			By("Unfencing (NetworkFence CR or iptables rules via PeerFenceProvider)")
+			for _, cidr := range cidrs {
+				Expect(faultProvider.UnfenceIP(ctx, cidr, fenceParams)).To(Succeed(), "UnfenceIP %s", cidr)
 			}
 
 			By("Waiting for controller to retry and EnableVolumeReplication to succeed")

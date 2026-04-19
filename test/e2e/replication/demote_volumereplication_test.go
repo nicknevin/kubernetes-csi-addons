@@ -27,8 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
 
 var _ = Describe("DemoteVolumeReplication", func() {
@@ -90,13 +90,8 @@ var _ = Describe("DemoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
-
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR1, nf)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR1, nfc)
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -382,9 +377,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Starting L1-DEM-003: Demote primary to secondary with peer unreachable (force=false)")
 			SkipIfNotFullDR("L1-DEM-003", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
 
-			By("Checking that the driver supports NetworkFence")
-			if !IsNetworkFenceSupportAvailable() {
-				Skip("L1-DEM-003 requires NetworkFence and NetworkFenceClass CRDs to be installed and the CSI driver to advertise network_fence.NETWORK_FENCE in CSIAddonsNode status.capabilities.")
+			injector := helpers.GetFaultInjectorTypeFromEnv()
+			if injector == helpers.FaultInjectorNone {
+				Skip("L1-DEM-003 requires fault injection (E2E_FAULT_INJECTOR=iptables|networkfence)")
+			}
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				if !IsNetworkFenceSupportAvailable() {
+					Skip("L1-DEM-003 (networkfence) requires NetworkFence CRDs and CSI driver network_fence capability in CSIAddonsNode.")
+				}
+			case helpers.FaultInjectorIptables:
+				if !helpers.HasPrivilegedDaemonSetSupport(ctx, GetK8sClientForCluster(ClusterDR1)) {
+					Skip("L1-DEM-003 (iptables) requires privileged DaemonSet support on DR1 for iptables fault injection.")
+				}
 			}
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
@@ -422,13 +427,16 @@ var _ = Describe("DemoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
+			var faultProvider helpers.PeerFenceProvider
 
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR1, nf, vrDR1)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR1, nfc)
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						Logf("[WARNING]", "L1-DEM-003: fault injection log collection: %v", err)
+					}
+					_ = faultProvider.Cleanup(cleanupCtx)
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -440,25 +448,48 @@ var _ = Describe("DemoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR1] Creating NetworkFenceClass to fence peer cluster")
-			nfcName := "nfc-dem-003-" + nsName
-			nfc = CreateNetworkFenceClass(ctx, cDR1, nfcName, env.Provisioner, secretName, secretNs)
-
-			By("[DR1] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, nfcName)
-			if len(cidrs) == 0 {
-				Skip("L1-DEM-003 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure peer cluster (DR2) has node InternalIPs for NetworkFence fallback")
+			var err error
+			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+				Type:       injector,
+				Client:     cDR1,
+				RESTConfig: GetRESTConfig(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
+					"image":           helpers.DefaultIptablesImageWithRegistry,
+					"cluster_context": "DR1",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider")
+			if !faultProvider.IsSupported(ctx) {
+				Skip(fmt.Sprintf("L1-DEM-003 (%s): fault injection not supported on this cluster", injector))
 			}
 
-			nfName := "nf-dem-003-" + nsName
-			By("[DR1] Creating NetworkFence (Fenced) to block peer cluster access")
-			nf = CreateNetworkFence(ctx, cDR1, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-			By("[DR1] Waiting for NetworkFence to report Succeeded")
-			WaitForNetworkFenceResult(ctx, cDR1, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			var cidrs []string
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				By("[DR1] Getting fence CIDRs for NetworkFence (FENCE_CIDRS, CSI status, or peer node IPs)")
+				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, "")
+			case helpers.FaultInjectorIptables:
+				By("[DR1] Getting fence CIDRs for iptables (peer backends on DR2)")
+				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR1, cDR2)
+			}
+			if len(cidrs) == 0 {
+				Skip("L1-DEM-003 could not get CIDRs: set FENCE_CIDRS or service discovery env vars; see replication-e2e-suite.md")
+			}
+
+			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
+			By(fmt.Sprintf("[DR1] Fencing peer CIDRs via %s: %v", injector, cidrs))
+			for _, cidr := range cidrs {
+				Expect(faultProvider.FenceIP(ctx, cidr, fenceParams)).To(Succeed(), "FenceIP %s", cidr)
+			}
+			if injector == helpers.FaultInjectorIptables {
+				time.Sleep(5 * time.Second)
+			}
 
 			By("[DR1] Attempting to demote primary to secondary while peer is fenced (force=false; should fail)")
 			vrDR1.Spec.ReplicationState = replicationv1alpha1.Secondary
-			err := cDR1.Update(ctx, vrDR1)
+			err = cDR1.Update(ctx, vrDR1)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("[DR1] Waiting for VR to report error (FailedToDemote or peer unreachable)")
@@ -472,11 +503,10 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			Expect(vrDR1.Status.State).NotTo(Equal(replicationv1alpha1.SecondaryState),
 				"L1-DEM-003: VR state should not change to Secondary when peer is unreachable with force=false")
 
-			By("[DR1] Unfencing by setting NetworkFence state to Unfenced")
-			UnfenceNetworkFence(ctx, cDR1, nf)
-
-			By("[DR1] Waiting for NetworkFence unfence operation to complete successfully")
-			WaitForNetworkFenceResult(ctx, cDR1, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			By("[DR1] Unfencing peer (PeerFenceProvider)")
+			for _, cidr := range cidrs {
+				Expect(faultProvider.UnfenceIP(ctx, cidr, nil)).To(Succeed(), "UnfenceIP %s", cidr)
+			}
 
 			By("[DR1] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
@@ -527,9 +557,19 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Starting L1-DEM-004: Demote primary to secondary with peer unreachable (force=true)")
 			SkipIfNotFullDR("L1-DEM-004", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
 
-			By("Checking that the driver supports NetworkFence")
-			if !IsNetworkFenceSupportAvailable() {
-				Skip("L1-DEM-004 requires NetworkFence and NetworkFenceClass CRDs to be installed and the CSI driver to advertise network_fence.NETWORK_FENCE in CSIAddonsNode status.capabilities.")
+			injector := helpers.GetFaultInjectorTypeFromEnv()
+			if injector == helpers.FaultInjectorNone {
+				Skip("L1-DEM-004 requires fault injection (E2E_FAULT_INJECTOR=iptables|networkfence)")
+			}
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				if !IsNetworkFenceSupportAvailable() {
+					Skip("L1-DEM-004 (networkfence) requires NetworkFence CRDs and CSI driver network_fence capability in CSIAddonsNode.")
+				}
+			case helpers.FaultInjectorIptables:
+				if !helpers.HasPrivilegedDaemonSetSupport(ctx, GetK8sClientForCluster(ClusterDR1)) {
+					Skip("L1-DEM-004 (iptables) requires privileged DaemonSet support on DR1 for iptables fault injection.")
+				}
 			}
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
@@ -567,13 +607,16 @@ var _ = Describe("DemoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			var nfc *csiaddonsv1alpha1.NetworkFenceClass
-			var nf *csiaddonsv1alpha1.NetworkFence
+			var faultProvider helpers.PeerFenceProvider
 
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR1, nf)
-				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR1, nfc)
+				if faultProvider != nil {
+					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
+						Logf("[WARNING]", "L1-DEM-004: fault injection log collection: %v", err)
+					}
+					_ = faultProvider.Cleanup(cleanupCtx)
+				}
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -585,25 +628,48 @@ var _ = Describe("DemoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR1] Creating NetworkFenceClass to fence peer cluster")
-			nfcName := "nfc-dem-004-" + nsName
-			nfc = CreateNetworkFenceClass(ctx, cDR1, nfcName, env.Provisioner, secretName, secretNs)
-
-			By("[DR1] Getting fence CIDRs for peer cluster nodes")
-			cidrs := GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, nfcName)
-			if len(cidrs) == 0 {
-				Skip("L1-DEM-004 could not get CIDRs: set FENCE_CIDRS, wait for CSI networkFenceClientStatus, or ensure peer cluster (DR2) has node InternalIPs for NetworkFence fallback")
+			var err error
+			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
+				Type:       injector,
+				Client:     cDR1,
+				RESTConfig: GetRESTConfig(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
+					"image":           helpers.DefaultIptablesImageWithRegistry,
+					"cluster_context": "DR1",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred(), "NewFaultInjectionProvider")
+			if !faultProvider.IsSupported(ctx) {
+				Skip(fmt.Sprintf("L1-DEM-004 (%s): fault injection not supported on this cluster", injector))
 			}
 
-			nfName := "nf-dem-004-" + nsName
-			By("[DR1] Creating NetworkFence (Fenced) to block peer cluster access")
-			nf = CreateNetworkFence(ctx, cDR1, nfName, nfcName, cidrs, csiaddonsv1alpha1.Fenced)
-			By("[DR1] Waiting for NetworkFence to report Succeeded")
-			WaitForNetworkFenceResult(ctx, cDR1, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			var cidrs []string
+			switch injector {
+			case helpers.FaultInjectorNetworkFence:
+				By("[DR1] Getting fence CIDRs for NetworkFence")
+				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR1, cDR2, env.Provisioner, "")
+			case helpers.FaultInjectorIptables:
+				By("[DR1] Getting fence CIDRs for iptables (peer backends on DR2)")
+				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR1, cDR2)
+			}
+			if len(cidrs) == 0 {
+				Skip("L1-DEM-004 could not get CIDRs: set FENCE_CIDRS or service discovery env vars; see replication-e2e-suite.md")
+			}
+
+			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
+			By(fmt.Sprintf("[DR1] Fencing peer CIDRs via %s: %v", injector, cidrs))
+			for _, cidr := range cidrs {
+				Expect(faultProvider.FenceIP(ctx, cidr, fenceParams)).To(Succeed(), "FenceIP %s", cidr)
+			}
+			if injector == helpers.FaultInjectorIptables {
+				time.Sleep(5 * time.Second)
+			}
 
 			By("[DR1] Attempting to demote primary to secondary while peer is fenced (force=true; should succeed)")
 			vrDR1.Spec.ReplicationState = replicationv1alpha1.Secondary
-			err := cDR1.Update(ctx, vrDR1)
+			err = cDR1.Update(ctx, vrDR1)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("[DR1] Waiting for VR to report success (Replicating or Completed with Demoted reason)")
@@ -628,11 +694,10 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			Expect(hasReplicationSuccessCondition(vrDR1)).To(BeTrue(),
 				"L1-DEM-004: VR must have Replicating or Completed condition after force demote")
 
-			By("[DR1] Unfencing by setting NetworkFence state to Unfenced")
-			UnfenceNetworkFence(ctx, cDR1, nf)
-
-			By("[DR1] Waiting for NetworkFence unfence operation to complete successfully")
-			WaitForNetworkFenceResult(ctx, cDR1, nf, csiaddonsv1alpha1.FencingOperationResultSucceeded)
+			By("[DR1] Unfencing peer (PeerFenceProvider)")
+			for _, cidr := range cidrs {
+				Expect(faultProvider.UnfenceIP(ctx, cidr, nil)).To(Succeed(), "UnfenceIP %s", cidr)
+			}
 
 			By("[DR1] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
@@ -664,8 +729,6 @@ var _ = Describe("DemoteVolumeReplication", func() {
 			By("Assertions: L1-DEM-004 — VR remains stable after unfence")
 			Expect(vrDR1.Status.State).To(Or(Equal(replicationv1alpha1.SecondaryState), Equal(replicationv1alpha1.UnknownState)),
 				"L1-DEM-004: VR state should remain Secondary or Unknown after unfence, got %q", vrDR1.Status.State)
-
-			DeleteNetworkFenceWithCleanup(ctx, cDR1, nf)
 		})
 	})
 

@@ -1,6 +1,6 @@
 # DL3007 ignored as it asks to pin the version explicitly to a release tag
 # hadolint ignore=DL3007
-FROM quay.io/fedora/fedora:latest
+FROM quay.io/fedora/fedora:44
 
 ENV GOPATH=/go
 ENV PATH="${GOPATH}/bin:${PATH}"

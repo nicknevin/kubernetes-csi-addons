@@ -211,17 +211,62 @@ func (r *VolumeGroupReplicationContentReconciler) Reconcile(ctx context.Context,
 		return reconcile.Result{}, err
 	}
 
-	pvRefList := []corev1.LocalObjectReference{}
+	// Build a map of volume handle -> PV for matching source handles to PV names
+	handleToPV := make(map[string]corev1.PersistentVolume)
 	for _, pv := range pvList.Items {
-		if slices.ContainsFunc(instance.Spec.Source.VolumeHandles, func(handle string) bool {
-			return pv.Spec.CSI != nil && pv.Spec.CSI.VolumeHandle == handle
-		}) {
+		if pv.Spec.CSI != nil {
+			handleToPV[pv.Spec.CSI.VolumeHandle] = pv
+		}
+	}
+
+	pvRefList := []corev1.LocalObjectReference{}
+	pvMappings := []replicationv1alpha1.PersistentVolumeMapping{}
+	for _, handle := range instance.Spec.Source.VolumeHandles {
+		if pv, ok := handleToPV[handle]; ok {
 			pvRefList = append(pvRefList, corev1.LocalObjectReference{
 				Name: pv.Name,
+			})
+			pvMappings = append(pvMappings, replicationv1alpha1.PersistentVolumeMapping{
+				Name:         pv.Name,
+				VolumeHandle: handle,
 			})
 		}
 	}
 	instance.Status.PersistentVolumeRefList = pvRefList
+	instance.Status.PersistentVolumeMappingList = pvMappings
+
+	// Fetch destination info if the driver supports it
+	if r.supportsGetReplicationDestinationInfo(ctx, instance.Spec.Provisioner) && groupID != "" {
+		repClient, clientErr := r.getGroupReplicationClient(ctx, instance.Spec.Provisioner)
+		if clientErr != nil {
+			logger.Error(clientErr, "failed to get group replication client for destination info")
+		} else {
+			resp, destErr := repClient.GetReplicationDestinationInfo(
+				groupID,
+				secretName,
+				secretNamespace,
+			)
+			if destErr != nil {
+				// SP may return UNAVAILABLE if destination details are not yet available.
+				// Requeue to retry -- destination fields remain empty, so VGR keeps
+				// DestinationInfoAvailable=False.
+				logger.Info("failed to get destination info, will retry", "error", destErr)
+			} else if resp != nil {
+				if vgDest := resp.GetReplicationDestination().GetVolumegroup(); vgDest != nil {
+					instance.Status.DestinationVolumeGroupID = vgDest.GetVolumeGroupId()
+
+					// Enrich PersistentVolumeMappingList with destination handles
+					destVolumeIDs := vgDest.GetVolumeIds()
+					for i, pvMapping := range instance.Status.PersistentVolumeMappingList {
+						if destHandle, ok := destVolumeIDs[pvMapping.VolumeHandle]; ok {
+							instance.Status.PersistentVolumeMappingList[i].DestinationVolumeHandle = destHandle
+						}
+					}
+				}
+			}
+		}
+	}
+
 	err = r.Status().Update(ctx, instance)
 	if err != nil {
 		logger.Error(err, "failed to update VGRContent status")
@@ -237,6 +282,38 @@ func (r *VolumeGroupReplicationContentReconciler) SetupWithManager(mgr ctrl.Mana
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&replicationv1alpha1.VolumeGroupReplicationContent{}).
 		Complete(r)
+}
+
+// supportsGetReplicationDestinationInfo checks if the driver supports the
+// GET_REPLICATION_DESTINATION_INFO capability.
+func (r *VolumeGroupReplicationContentReconciler) supportsGetReplicationDestinationInfo(ctx context.Context, driverName string) bool {
+	conn, err := r.Connpool.GetLeaderByDriver(ctx, r.Client, driverName)
+	if err != nil {
+		return false
+	}
+
+	for _, cap := range conn.Capabilities {
+		if cap.GetVolumeReplication() == nil {
+			continue
+		}
+
+		if cap.GetVolumeReplication().GetType() == identity.Capability_VolumeReplication_GET_REPLICATION_DESTINATION_INFO {
+			return true
+		}
+	}
+
+	return false
+}
+
+// getGroupReplicationClient returns a VolumeGroupReplication client for calling
+// replication RPCs at the group level.
+func (r *VolumeGroupReplicationContentReconciler) getGroupReplicationClient(ctx context.Context, driverName string) (grpcClient.VolumeReplication, error) {
+	conn, err := r.Connpool.GetLeaderByDriver(ctx, r.Client, driverName)
+	if err != nil {
+		return nil, fmt.Errorf("no leader for the ControllerService of driver %q", driverName)
+	}
+
+	return grpcClient.NewVolumeGroupReplicationClient(conn.Client, r.Timeout), nil
 }
 
 func (r *VolumeGroupReplicationContentReconciler) getVolumeGroupClient(ctx context.Context, driverName string) (grpcClient.VolumeGroup, error) {

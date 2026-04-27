@@ -215,6 +215,9 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		// Update PersistentVolumeClaimsRefList in VGR Status
 		if !reflect.DeepEqual(instance.Status.PersistentVolumeClaimsRefList, pvcRefList) {
 			instance.Status.PersistentVolumeClaimsRefList = pvcRefList
+			// Mark destination info as stale since group membership changed
+			setDestinationInfoPendingCondition(&instance.Status.Conditions,
+				instance.Generation, volumeGroupReplicationDataSource)
 			err = r.Status().Update(ctx, instance)
 			if err != nil {
 				r.log.Error(err, "failed to update VolumeGroupReplication resource")
@@ -326,6 +329,25 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	for i := range instance.Status.Conditions {
 		instance.Status.Conditions[i].ObservedGeneration = instance.Generation
 	}
+
+	// Validate VGRContent destination info and signal readiness on VGR.
+	// If PersistentVolumeMappingList is populated in VGRContent.Status and every
+	// entry has a DestinationVolumeHandle, the destination info is complete.
+	if !isDestinationInfoAvailable(instance.Status.Conditions) &&
+		len(vgrContentObj.Status.PersistentVolumeMappingList) > 0 {
+		allCovered := true
+		for _, pvMapping := range vgrContentObj.Status.PersistentVolumeMappingList {
+			if pvMapping.DestinationVolumeHandle == "" {
+				allCovered = false
+				break
+			}
+		}
+		if allCovered {
+			setDestinationInfoAvailableCondition(&instance.Status.Conditions,
+				instance.Generation, volumeGroupReplicationDataSource)
+		}
+	}
+
 	err = r.Status().Update(ctx, instance)
 	if err != nil {
 		r.log.Error(err, "failed to update volumeGroupReplication instance's status", "VGRName", instance.Name)
@@ -375,15 +397,18 @@ func (r *VolumeGroupReplicationReconciler) SetupWithManager(mgr ctrl.Manager) er
 		},
 	}
 
-	// Watch for only spec updates of the VGRContent resource
-	watchOnlySpecUpdates := predicate.Funcs{
+	// Watch for spec or status updates of the VGRContent resource.
+	// Status watching is needed so VGR reconciles when VGRContent
+	// destination info is updated.
+	watchSpecAndStatusUpdates := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			if e.ObjectOld == nil || e.ObjectNew == nil {
 				return false
 			}
 			oldObj := e.ObjectOld.(*replicationv1alpha1.VolumeGroupReplicationContent)
 			newObj := e.ObjectNew.(*replicationv1alpha1.VolumeGroupReplicationContent)
-			return !reflect.DeepEqual(oldObj.Spec, newObj.Spec)
+			return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
+				!reflect.DeepEqual(oldObj.Status, newObj.Status)
 		},
 		CreateFunc: func(e event.CreateEvent) bool {
 			return false
@@ -473,7 +498,7 @@ func (r *VolumeGroupReplicationReconciler) SetupWithManager(mgr ctrl.Manager) er
 		For(&replicationv1alpha1.VolumeGroupReplication{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&replicationv1alpha1.VolumeGroupReplicationContent{}, builder.WithPredicates(skipUpdates)).
 		Owns(&replicationv1alpha1.VolumeReplication{}, builder.WithPredicates(skipUpdates)).
-		Watches(&replicationv1alpha1.VolumeGroupReplicationContent{}, enqueueVGRRequest, builder.WithPredicates(watchOnlySpecUpdates)).
+		Watches(&replicationv1alpha1.VolumeGroupReplicationContent{}, enqueueVGRRequest, builder.WithPredicates(watchSpecAndStatusUpdates)).
 		Watches(&replicationv1alpha1.VolumeReplication{}, enqueueVGRRequest, builder.WithPredicates(watchOnlyStatusUpdates)).
 		Watches(&corev1.PersistentVolumeClaim{}, enqueueVGRForPVCRequest, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)

@@ -27,14 +27,14 @@ log_error() { echo -e "${RED}[✗]${NC} $1"; }
 
 # Detect container runtime
 detect_container_runtime() {
-    if command -v podman >/dev/null 2>&1; then
-        echo "podman"
-    elif command -v docker >/dev/null 2>&1; then
-        echo "docker"
-    else
-        log_error "Neither podman nor docker found"
-        exit 1
-    fi
+	if command -v podman >/dev/null 2>&1; then
+		echo "podman"
+	elif command -v docker >/dev/null 2>&1; then
+		echo "docker"
+	else
+		log_error "Neither podman nor docker found"
+		exit 1
+	fi
 }
 
 CONTAINER_CMD=$(detect_container_runtime)
@@ -46,10 +46,10 @@ log_info "============================="
 
 # Build the image
 if make -C "$REPO_ROOT" -f test/e2e/utils/Makefile.iptables build-iptables-image >/dev/null 2>&1; then
-    log_success "Image built successfully"
+	log_success "Image built successfully"
 else
-    log_error "Failed to build image"
-    exit 1
+	log_error "Failed to build image"
+	exit 1
 fi
 
 echo
@@ -59,10 +59,10 @@ log_info "Running: $CONTAINER_CMD tag localhost/csi-addons/iptables-manager:late
 # Tag the image with both localhost/ and without
 # This allows it to be found by either name
 if $CONTAINER_CMD tag localhost/csi-addons/iptables-manager:latest csi-addons/iptables-manager:latest; then
-    log_success "Image tagged successfully"
+	log_success "Image tagged successfully"
 else
-    log_error "Failed to tag image"
-    exit 1
+	log_error "Failed to tag image"
+	exit 1
 fi
 
 echo
@@ -74,27 +74,27 @@ log_info "Testing image accessibility with different tags:"
 
 # Test with csi-addons prefix (what preload-images.sh needs)
 if $CONTAINER_CMD run --rm csi-addons/iptables-manager:latest iptables --version >/dev/null 2>&1; then
-    log_success "✓ csi-addons/iptables-manager:latest - ACCESSIBLE"
+	log_success "✓ csi-addons/iptables-manager:latest - ACCESSIBLE"
 else
-    log_error "✗ csi-addons/iptables-manager:latest - NOT ACCESSIBLE"
-    exit 1
+	log_error "✗ csi-addons/iptables-manager:latest - NOT ACCESSIBLE"
+	exit 1
 fi
 
 # Test with localhost prefix (original)
 if $CONTAINER_CMD run --rm localhost/csi-addons/iptables-manager:latest iptables --version >/dev/null 2>&1; then
-    log_success "✓ localhost/csi-addons/iptables-manager:latest - ACCESSIBLE"
+	log_success "✓ localhost/csi-addons/iptables-manager:latest - ACCESSIBLE"
 else
-    log_warn "! localhost/csi-addons/iptables-manager:latest - NOT ACCESSIBLE"
+	log_warn "! localhost/csi-addons/iptables-manager:latest - NOT ACCESSIBLE"
 fi
 
 echo
 log_info "Image details:"
 if $CONTAINER_CMD inspect csi-addons/iptables-manager:latest >/dev/null 2>&1; then
-    $CONTAINER_CMD inspect csi-addons/iptables-manager:latest --format="Size: {{.Size}} bytes"
-    $CONTAINER_CMD inspect csi-addons/iptables-manager:latest --format="Created: {{.Created}}"
+	$CONTAINER_CMD inspect csi-addons/iptables-manager:latest --format="Size: {{.Size}} bytes"
+	$CONTAINER_CMD inspect csi-addons/iptables-manager:latest --format="Created: {{.Created}}"
 else
-    log_error "Image 'csi-addons/iptables-manager:latest' not found"
-    exit 1
+	log_error "Image 'csi-addons/iptables-manager:latest' not found"
+	exit 1
 fi
 
 echo

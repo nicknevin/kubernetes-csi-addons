@@ -48,6 +48,8 @@ CLEANUP_SCRIPT="${SCRIPT_DIR}/clean-replication-e2e-resources.sh"
 mkdir -p "${LOGS_DIR}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="${LOGS_DIR}/replication-e2e_${TIMESTAMP}.log"
+# Mirror everything below to the log file. Makefile output (manifests, generate, fmt, vet) runs before this script and appears on the terminal only.
+exec > >(tee -a "${LOG_FILE}") 2>&1
 INSTALL_CRDS="${INSTALL_CRDS:-false}"
 REPLICATION_TEST_TIMEOUT="${REPLICATION_TEST_TIMEOUT:-30m}"
 GINKGO_VERBOSE="${GINKGO_VERBOSE:-v}"
@@ -131,7 +133,20 @@ echo "  CSI_PROVISIONER=${CSI_PROVISIONER:-rook-ceph.rbd.csi.ceph.com}"
 echo "  DR1_CONTEXT=${DR1_CONTEXT:-<unset>}"
 echo "  DR2_CONTEXT=${DR2_CONTEXT:-<unset>}"
 echo "  IPTABLES_IMAGE=${IPTABLES_IMAGE:-csi-addons/iptables-manager:latest}"
-echo "  GINKGO_FOCUS=${GINKGO_FOCUS:-<all>}"
+echo "  GINKGO_VERBOSE=${GINKGO_VERBOSE:-v}"
+echo "  E2E_FAULT_INJECTOR=${E2E_FAULT_INJECTOR:-<default iptables>}"
+echo "  E2E_IPTABLES_IMAGE=(exported before go test; see Full environment after iptables prep)"
+echo "  FENCE_TARGET_SERVICES=${FENCE_TARGET_SERVICES:-<unset>}"
+echo "  FENCE_PEER_SERVICES=${FENCE_PEER_SERVICES:-<unset>}"
+echo "  FENCE_CIDRS=${FENCE_CIDRS:-<unset>}"
+echo "  FENCE_CLUSTER_ID=${FENCE_CLUSTER_ID:-<unset>}"
+echo "  FENCE_AUTO_ENDPOINT_NAMESPACES=${FENCE_AUTO_ENDPOINT_NAMESPACES:-<unset>}"
+echo "  INSTALL_CRDS=${INSTALL_CRDS}"
+echo "  GINKGO_SKIP=${GINKGO_SKIP:-<none>}"
+echo "  E2E_IPTABLES_SKIP_SUITE_DS_RECREATE=${E2E_IPTABLES_SKIP_SUITE_DS_RECREATE:-<unset>}"
+echo "  E2E_IPTABLES_DAEMONSET_NAMESPACE=${E2E_IPTABLES_DAEMONSET_NAMESPACE:-<default csi-addons-system>}"
+echo "  E2E_IPTABLES_DAEMONSET_NAME=${E2E_IPTABLES_DAEMONSET_NAME:-<default csi-addons-iptables-manager>}"
+echo "  USE_EXISTING_CLUSTER=true (set by this script for go test)"
 echo ""
 
 echo "[3/5] Checking VolumeReplication CRD..."
@@ -149,15 +164,24 @@ else
 fi
 echo ""
 
-echo "[3.5/6] Preparing iptables image for fault injection..."
+# Only build/load iptables image when tests use the iptables injector (unset defaults to iptables). Skip for networkfence / none.
+E2E_FAULT_INJECTOR_LOWER="$(printf '%s' "${E2E_FAULT_INJECTOR:-}" | tr '[:upper:]' '[:lower:]')"
+case "${E2E_FAULT_INJECTOR_LOWER}" in
+networkfence | none)
+	echo "[3.5/6] Skipping iptables image build/load (E2E_FAULT_INJECTOR is ${E2E_FAULT_INJECTOR_LOWER})."
+	;;
+*)
+	echo "[3.5/6] Preparing iptables image for fault injection..."
+	;;
+esac
 
 # Simple function to load image to cluster
 load_image_to_cluster() {
 	local context="$1"
 	local image="$2"
-	
+
 	echo "  [DEBUG] Attempting to load image '$image' to context '$context'"
-	
+
 	# Test if image is accessible first
 	local test_pod
 	test_pod="image-test-$(date +%s)"
@@ -167,35 +191,35 @@ load_image_to_cluster() {
 		return 0
 	fi
 	echo "  [DEBUG] Image not yet accessible in context, attempting to load..."
-	
+
 	# Try to load for kind clusters
 	if command -v kind >/dev/null 2>&1; then
 		local cluster_name="$context"
 		[[ "$context" =~ kind- ]] && cluster_name="${context#kind-}"
-		
+
 		if kind get clusters 2>/dev/null | grep -q "^${cluster_name}$"; then
 			echo "Loading via kind to cluster: $cluster_name"
 			kind load docker-image "$image" --name="$cluster_name" && return 0
 		fi
 	fi
-	
+
 	# Try to load for k3d clusters
 	if command -v k3d >/dev/null 2>&1; then
 		local cluster_name="$context"
 		[[ "$context" =~ k3d- ]] && cluster_name="${context#k3d-}"
-		
+
 		if k3d cluster list 2>/dev/null | grep -q "$cluster_name"; then
 			echo "Loading via k3d to cluster: $cluster_name"
 			k3d image import "$image" --cluster="$cluster_name" && return 0
 		fi
 	fi
-	
+
 	# Try to load for minikube clusters
 	if command -v minikube >/dev/null 2>&1; then
 		local cluster_name="$context"
 		# Extract cluster name from context (remove minikube- prefix if present)
 		[[ "$context" =~ minikube- ]] && cluster_name="${context#minikube-}"
-		
+
 		echo "  [DEBUG] Checking for minikube profile: '$cluster_name'"
 		if minikube profile list 2>/dev/null | grep -q "^${cluster_name}"; then
 			echo "Loading via minikube to cluster: $cluster_name"
@@ -214,57 +238,58 @@ load_image_to_cluster() {
 			echo "  [DEBUG] Minikube profile '$cluster_name' not found in profile list"
 		fi
 	fi
-	
+
 	echo "Cannot load $image to $context (not kind/k3d/minikube or image not in registry)"
 	return 1
 }
 
 prepare_iptables_image() {
 	local iptables_image="${IPTABLES_IMAGE:-csi-addons/iptables-manager:latest}"
-	
+
 	# Use pre-built iptables image with all tools included
 	# No fallback to alpine - the custom image has everything needed
 	echo "  Using pre-built iptables image: $iptables_image"
-	
+
 	# Only attempt to load image to clusters if DR contexts are set (dual-cluster testing)
 	if [[ -n "${DR1_CONTEXT:-}" && -n "${DR2_CONTEXT:-}" ]]; then
 		echo "  Detected dual-cluster setup (DR1_CONTEXT=${DR1_CONTEXT}, DR2_CONTEXT=${DR2_CONTEXT})"
-		
+
 		# Detect container command
-		if command -v podman > /dev/null 2>&1; then
+		if command -v podman >/dev/null 2>&1; then
 			CONTAINER_CMD="podman"
-		elif command -v docker > /dev/null 2>&1; then
+		elif command -v docker >/dev/null 2>&1; then
 			CONTAINER_CMD="docker"
 		else
 			echo "  WARNING: Neither podman nor docker found, skipping pre-cluster image loading"
 			echo "  (Image should already be available in clusters)"
 		fi
-		
+
 		# Normalize image name - remove localhost/ prefix if present (podman may add it)
 		iptables_image="${iptables_image#localhost/}"
 		echo "  Using normalized image: $iptables_image"
-		
+
 		# Build custom iptables image if needed
 		if [[ "$iptables_image" == "csi-addons/iptables-manager:latest" ]]; then
 			echo "  Checking if custom iptables image needs to be built..."
 			if ! $CONTAINER_CMD images --format "table {{.Repository}}:{{.Tag}}" | grep -E "(^|/)csi-addons/iptables-manager:latest\$" >/dev/null 2>&1; then
 				echo "  Building custom iptables image..."
-				if [[ -f "${REPO_ROOT}/build/Containerfile.iptables" ]]; then
-					if $CONTAINER_CMD build -t "csi-addons/iptables-manager:latest" -f "${REPO_ROOT}/build/Containerfile.iptables" "${REPO_ROOT}/build/" >/dev/null 2>&1; then
+				E2E_IPTABLES_DIR="${REPO_ROOT}/test/e2e/utils"
+				if [[ -f "${E2E_IPTABLES_DIR}/Containerfile.iptables" ]]; then
+					if $CONTAINER_CMD build -t "csi-addons/iptables-manager:latest" -f "${E2E_IPTABLES_DIR}/Containerfile.iptables" "${E2E_IPTABLES_DIR}" >/dev/null 2>&1; then
 						echo "  ✓ Successfully built custom iptables image"
 					else
 						echo "  WARNING: Failed to build custom iptables image, will attempt to use existing"
 					fi
 				else
-					echo "  WARNING: Containerfile.iptables not found, will attempt to use existing image"
+					echo "  WARNING: Containerfile.iptables not found under test/e2e/utils, will attempt to use existing image"
 				fi
 			else
 				echo "  ✓ Custom iptables image already exists locally"
 			fi
 		fi
-		
+
 		echo "  Attempting to load image $iptables_image to DR clusters..."
-		
+
 		# Load to DR1 cluster (non-fatal if fails - image may already be there)
 		echo "    Loading to DR1 cluster ($DR1_CONTEXT)..."
 		if load_image_to_cluster "$DR1_CONTEXT" "$iptables_image"; then
@@ -272,7 +297,7 @@ prepare_iptables_image() {
 		else
 			echo "    ℹ Image not pre-loaded to DR1 (will pull from registry if available)"
 		fi
-		
+
 		# Load to DR2 cluster (non-fatal if fails - image may already be there)
 		echo "    Loading to DR2 cluster ($DR2_CONTEXT)..."
 		if load_image_to_cluster "$DR2_CONTEXT" "$iptables_image"; then
@@ -280,21 +305,22 @@ prepare_iptables_image() {
 		else
 			echo "    ℹ Image not pre-loaded to DR2 (will pull from registry if available)"
 		fi
-		
+
 		echo "  ✓ Ready to use pre-built iptables image in clusters"
 	else
 		echo "  Single-cluster mode: skipping pre-cluster image load"
 	fi
-	
+
 	# Always export the pre-built image (no alpine fallback)
 	export E2E_IPTABLES_IMAGE="$iptables_image"
 }
 
-# Call the image preparation function
-prepare_iptables_image
-echo ""
-
-echo "[4/6] Running replication E2E tests (timeout ${REPLICATION_TEST_TIMEOUT}, output tee'd to ${LOG_FILE})..."
+# Call the image preparation function when the suite will use iptables fault injection
+case "${E2E_FAULT_INJECTOR_LOWER}" in
+networkfence | none) ;;
+*) prepare_iptables_image ;;
+esac
+echo "[4/6] Running replication E2E tests (timeout ${REPLICATION_TEST_TIMEOUT}, logging to ${LOG_FILE})..."
 echo "  Use REPLICATION_POLL_TIMEOUT=600 if Replicating=True times out."
 echo "  Use REPLICATION_TEST_TIMEOUT=45m or 60m if suite hits test timeout."
 echo ""
@@ -328,9 +354,9 @@ echo ""
 set +e
 # shellcheck disable=SC2086  # GINKGO_EXTRA intentionally word-split for multiple arguments
 if command -v stdbuf &>/dev/null; then
-	USE_EXISTING_CLUSTER=true stdbuf -oL go test -v -timeout "${REPLICATION_TEST_TIMEOUT}" "${E2E_PKG}" ${GINKGO_EXTRA} "${GINKGO_FOCUS_FLAG[@]}" "${GINKGO_SKIP_FLAG[@]}" 2>&1 | tee "${LOG_FILE}"
+	USE_EXISTING_CLUSTER=true stdbuf -oL go test -v -timeout "${REPLICATION_TEST_TIMEOUT}" "${E2E_PKG}" ${GINKGO_EXTRA} "${GINKGO_FOCUS_FLAG[@]}" "${GINKGO_SKIP_FLAG[@]}" 2>&1
 else
-	USE_EXISTING_CLUSTER=true go test -v -timeout "${REPLICATION_TEST_TIMEOUT}" "${E2E_PKG}" ${GINKGO_EXTRA} "${GINKGO_FOCUS_FLAG[@]}" "${GINKGO_SKIP_FLAG[@]}" 2>&1 | tee "${LOG_FILE}"
+	USE_EXISTING_CLUSTER=true go test -v -timeout "${REPLICATION_TEST_TIMEOUT}" "${E2E_PKG}" ${GINKGO_EXTRA} "${GINKGO_FOCUS_FLAG[@]}" "${GINKGO_SKIP_FLAG[@]}" 2>&1
 fi
 EXIT_CODE="${PIPESTATUS[0]}"
 set -e

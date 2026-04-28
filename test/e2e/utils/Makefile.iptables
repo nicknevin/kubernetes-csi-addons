@@ -147,6 +147,42 @@ verify-images-in-clusters: ## Verify iptables images are accessible in both DR c
 	kubectl --context=$(DR2_CONTEXT) delete pod $$TEST_POD_DR2 || echo "DR2 test failed"
 	@echo "✓ Image verification completed"
 
+.PHONY: validate-network-fence
+validate-network-fence: ## Validate fence using auto-discovered in-cluster DNS/API IP (optional: VALIDATE_FENCE_TARGET=IP[/mask] to override)
+	@echo "Running comprehensive iptables network fence validation..."
+	@echo "This will test DaemonSet deployment, fence/unfence operations, and connectivity verification"
+	@$(BUILD_CONTEXT)validate-iptables-fence.sh
+
+.PHONY: test-e2e-flow  
+test-e2e-flow: build-iptables-image load-images-to-clusters validate-network-fence ## Complete E2E test preparation and validation
+	@echo "✓ Complete E2E test flow completed successfully!"
+	@echo "Your environment is now ready for E2E testing with iptables-based network fencing."
+
+.PHONY: emergency-cleanup
+emergency-cleanup: ## Emergency cleanup of leftover iptables fence rules on DR1 and DR2 (kubectl + minikube ssh fallback)
+	@echo "Performing emergency cleanup of iptables fence rules on $(DR1_CONTEXT) and $(DR2_CONTEXT)..."
+	@for ctx in $(DR1_CONTEXT) $(DR2_CONTEXT); do \
+		if kubectl config get-contexts "$$ctx" >/dev/null 2>&1; then \
+			echo ">>> Context $$ctx"; \
+			"$(BUILD_CONTEXT)/emergency-cleanup-iptables.sh" "$$ctx" "e2e-*"; \
+			"$(BUILD_CONTEXT)/emergency-cleanup-iptables.sh" "$$ctx" csi-addons-system; \
+			echo ">>> Direct node-level cleanup for $$ctx (minikube ssh fallback)..."; \
+			if command -v minikube >/dev/null 2>&1; then \
+				minikube ssh -p "$$ctx" -- "sudo iptables-legacy -D OUTPUT -d 0.0.0.0/0 -j REJECT --reject-with icmp-host-unreachable 2>/dev/null; sudo iptables-legacy -D FORWARD -d 0.0.0.0/0 -j REJECT --reject-with icmp-host-unreachable 2>/dev/null; echo 'Node-level REJECT rules reviewed/cleaned'" || true; \
+			else \
+				echo "    minikube not found; skipping direct node cleanup"; \
+			fi; \
+		else \
+			echo "Skipping missing kubeconfig context: $$ctx"; \
+		fi; \
+	done
+	@echo ""
+	@echo "✓ Emergency cleanup completed"
+	@echo ""
+	@echo "For a single context/namespace or manual direct cleanup, run:"
+	@echo "  $(BUILD_CONTEXT)emergency-cleanup-iptables.sh <context> <namespace>"
+	@echo "  minikube ssh -p <context> -- sudo iptables-legacy -L OUTPUT -n -v (to verify)"
+
 # Compatibility targets for existing scripts
 .PHONY: docker-build-iptables
 docker-build-iptables: build-iptables-image ## Compatibility alias for build-iptables-image

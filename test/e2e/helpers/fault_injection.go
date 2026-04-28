@@ -102,8 +102,13 @@ type FaultInjectionConfig struct {
 	// Type specifies which fault injection mechanism to use
 	Type FaultInjectorType
 
-	// Client is the Kubernetes client for cluster operations
+	// Client is the Kubernetes client for cluster operations (current/fencing cluster)
 	Client client.Client
+
+	// PeerClient is the Kubernetes client for the peer cluster (optional, for full-DR scenarios).
+	// Required for full-DR iptables discovery to resolve FENCE_PEER_SERVICES on the peer cluster.
+	// Leave nil for single-cluster scenarios or when peer client is not available.
+	PeerClient client.Client
 
 	// Namespace for provider resources (DaemonSets, etc.)
 	Namespace string
@@ -177,22 +182,6 @@ func GetFaultInjectorTypeFromEnv() FaultInjectorType {
 		return FaultInjectorNone
 	default:
 		return FaultInjectorIptables
-	}
-}
-
-// SweepIptablesResidualAfterUnfence runs the staged REJECT sweep on all iptables manager pods when the
-// fault injector is iptables. Call after UnfenceIP when replication or resync must proceed: per-CIDR
-// UnfenceIP can leave rules on some nodes until this sweep runs. Best-effort: logs a warning on error.
-func SweepIptablesResidualAfterUnfence(ctx context.Context, injector FaultInjectorType, p PeerFenceProvider) {
-	if injector != FaultInjectorIptables || p == nil {
-		return
-	}
-	ipt, ok := p.(*IptablesFaultProvider)
-	if !ok {
-		return
-	}
-	if err := ipt.SweepResidualFenceRules(ctx); err != nil {
-		Logf("[WARNING]", "iptables post-unfence residual sweep: %v", err)
 	}
 }
 

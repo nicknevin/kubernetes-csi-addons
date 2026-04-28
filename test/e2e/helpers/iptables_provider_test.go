@@ -137,44 +137,20 @@ func TestQuickTemplateCheck(t *testing.T) {
 			t.Errorf("Expected namespace 'test-namespace-12345', got: %s", daemonSet.Namespace)
 		}
 
-		// Check volumes
-		if len(daemonSet.Spec.Template.Spec.Volumes) != 2 {
-			t.Errorf("Expected 2 volumes, got: %d", len(daemonSet.Spec.Template.Spec.Volumes))
+		// Check volumes (template uses tmp-dir emptyDir for readiness marker)
+		if len(daemonSet.Spec.Template.Spec.Volumes) != 1 {
+			t.Errorf("Expected 1 volume, got: %d", len(daemonSet.Spec.Template.Spec.Volumes))
+		}
+		if daemonSet.Spec.Template.Spec.Volumes[0].Name != "tmp-dir" {
+			t.Errorf("Expected tmp-dir volume, got: %s", daemonSet.Spec.Template.Spec.Volumes[0].Name)
 		}
 
-		// Check that ConfigMap volume is properly configured
-		var foundConfigMapVolume bool
-		for _, volume := range daemonSet.Spec.Template.Spec.Volumes {
-			if volume.Name == "iptables-rules" && volume.ConfigMap != nil {
-				if volume.ConfigMap.Name != "csi-addons-iptables-manager-rules" {
-					t.Errorf("Expected ConfigMap name 'csi-addons-iptables-manager-rules', got: %s", volume.ConfigMap.Name)
-				}
-				foundConfigMapVolume = true
-				break
-			}
-		}
-		if !foundConfigMapVolume {
-			t.Error("ConfigMap volume not found in DaemonSet")
-		}
-
-		// Check volume mounts
 		container := daemonSet.Spec.Template.Spec.Containers[0]
-		if len(container.VolumeMounts) != 2 {
-			t.Errorf("Expected 2 volume mounts, got: %d", len(container.VolumeMounts))
+		if len(container.VolumeMounts) != 1 {
+			t.Errorf("Expected 1 volume mount, got: %d", len(container.VolumeMounts))
 		}
-
-		var foundConfigMapMount bool
-		for _, mount := range container.VolumeMounts {
-			if mount.Name == "iptables-rules" {
-				if mount.MountPath != "/rules" {
-					t.Errorf("Expected mount path '/rules', got: %s", mount.MountPath)
-				}
-				foundConfigMapMount = true
-				break
-			}
-		}
-		if !foundConfigMapMount {
-			t.Error("ConfigMap volume mount not found in container")
+		if container.VolumeMounts[0].Name != "tmp-dir" || container.VolumeMounts[0].MountPath != "/tmp" {
+			t.Errorf("Unexpected volume mount: %+v", container.VolumeMounts[0])
 		}
 
 		fmt.Printf("E2E scenario test passed:\n")

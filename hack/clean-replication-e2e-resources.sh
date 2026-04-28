@@ -161,7 +161,7 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 		echo ""
 		echo "Cleaning test VolumeReplicationClasses..."
 		for vrc in $(kubectl_ctx "$CURRENT_CTX" get volumereplicationclass -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-			if [[ "$vrc" == vrc-snapshot-* ]] || [[ "$vrc" == vrc-journal-* ]] || [[ "$vrc" == vrc-idem-* ]] || [[ "$vrc" == vrc-info-* ]] || [[ "$vrc" == vrc-nonexist-* ]] || [[ "$vrc" == vrc-fence-* ]]; then
+			if [[ "$vrc" == vrc-snapshot-* ]] || [[ "$vrc" == vrc-journal-* ]] || [[ "$vrc" == vrc-idem-* ]] || [[ "$vrc" == vrc-info-* ]] || [[ "$vrc" == vrc-nonexist-* ]] || [[ "$vrc" == vrc-fence-* ]] || [[ "$vrc" == vrc-handler-* ]]; then
 				if [[ "$DRY_RUN" == "true" ]]; then
 					echo "  [dry-run] would delete VRC $vrc"
 				else
@@ -240,8 +240,8 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 		echo ""
 		echo "Cleaning test NetworkFences..."
 		for nf in $(kubectl_ctx "$CURRENT_CTX" get networkfence -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-			# Match test patterns: nf-fence-*, nf-fault-*, nf-e2e-replication-*, nf-prom-*-e2e-replication-*, nf-dem-*-e2e-replication-*
-			if [[ "$nf" == nf-fence-* ]] || [[ "$nf" == nf-fault-* ]] || [[ "$nf" == nf-e2e-replication-* ]] || [[ "$nf" == nf-prom-*-e2e-replication-* ]] || [[ "$nf" == nf-dem-*-e2e-replication-* ]]; then
+			# Match test patterns: nf-fence-*, nf-fault-*, nf-handler-*, nf-e2e-replication-*, nf-prom-*-e2e-replication-*, nf-dem-*-e2e-replication-*
+			if [[ "$nf" == nf-fence-* ]] || [[ "$nf" == nf-fault-* ]] || [[ "$nf" == nf-handler-* ]] || [[ "$nf" == nf-e2e-replication-* ]] || [[ "$nf" == nf-prom-*-e2e-replication-* ]] || [[ "$nf" == nf-dem-*-e2e-replication-* ]]; then
 				if [[ "$DRY_RUN" == "true" ]]; then
 					echo "  [dry-run] would unfence and delete NetworkFence $nf"
 				else
@@ -288,8 +288,8 @@ for CURRENT_CTX in "${CONTEXTS[@]}"; do
 	if kubectl_ctx "$CURRENT_CTX" get crd networkfenceclasses.csiaddons.openshift.io &>/dev/null; then
 		echo "Cleaning test NetworkFenceClasses..."
 		for nfc in $(kubectl_ctx "$CURRENT_CTX" get networkfenceclass -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-			# Match test patterns: nfc-fence-*, nfc-fault-*, nfc-e2e-replication-*, nfc-prom-*-e2e-replication-*, nfc-dem-*-e2e-replication-*
-			if [[ "$nfc" == nfc-fence-* ]] || [[ "$nfc" == nfc-fault-* ]] || [[ "$nfc" == nfc-e2e-replication-* ]] || [[ "$nfc" == nfc-prom-*-e2e-replication-* ]] || [[ "$nfc" == nfc-dem-*-e2e-replication-* ]]; then
+			# Match test patterns: nfc-fence-*, nfc-fault-*, nfc-handler-*, nfc-e2e-replication-*, nfc-prom-*-e2e-replication-*, nfc-dem-*-e2e-replication-*
+			if [[ "$nfc" == nfc-fence-* ]] || [[ "$nfc" == nfc-fault-* ]] || [[ "$nfc" == nfc-handler-* ]] || [[ "$nfc" == nfc-e2e-replication-* ]] || [[ "$nfc" == nfc-prom-*-e2e-replication-* ]] || [[ "$nfc" == nfc-dem-*-e2e-replication-* ]]; then
 				if [[ "$DRY_RUN" == "true" ]]; then
 					echo "  [dry-run] would delete NetworkFenceClass $nfc"
 				else

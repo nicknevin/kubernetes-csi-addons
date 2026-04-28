@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -192,10 +193,10 @@ func (p *IptablesFaultProvider) FenceIP(ctx context.Context, targetCIDR string, 
 
 	// Best-effort: API may be unreachable if the fenced CIDR includes the control-plane node/network.
 	if err := p.syncFenceStateConfigMap(ctx); err != nil {
+		// Don't treat ConfigMap sync failures as fatal - if the API is blocked by the new fence rule, this will likely fail. The important part is that we attempted to record the intended state before applying the fence.
 		Logf("[WARNING]", "post-fence sync fence state ConfigMap (may fail if API path is blocked): %v", err)
 	}
-	// This event records success of the iptables fencing step (executeIptablesCommand for "fence"), not the
-	// post-fence ConfigMap sync. ConfigMap update may fail; that case is handled by the Logf immediately above.
+	// Record event after successfully applying the fence, ignoring ConfigMap sync errors which may indicate API access issues due to the new fence rule.
 	p.emitIptablesFenceEvent(ctx, EventReasonIptablesFenceApplied, fmt.Sprintf(
 		"Applied OUTPUT+FORWARD REJECT to %s (workload namespace %q). State: kubectl -n %s get configmap %s -o yaml",
 		targetCIDR, p.config.Namespace, p.dsNamespace, IptablesFenceStateConfigMapName))
@@ -209,14 +210,6 @@ func (p *IptablesFaultProvider) FenceIP(ctx context.Context, targetCIDR string, 
 	return nil
 }
 
-// UnfenceIP removes OUTPUT/FORWARD REJECT rules for targetCIDR from iptables manager DaemonSet pods.
-//
-// Error handling: if executeIptablesCommand fails (e.g. remote exec error on one node after succeeding on others),
-// targetCIDR remains in activeFenceRules so callers can retry. A best-effort staged REJECT sweep runs to strip
-// CSI-Addons icmp-host-unreachable rules on all manager pods and reduce leftover partition state. Tests should
-// still register DeferCleanup with PeerFenceProvider.Cleanup (full unfence of tracked CIDRs, staged sweep,
-// ConfigMap teardown, optional DS delete when owned)—not only a loop of UnfenceIP by CIDR—so teardown matches
-// L1-E-003 and survives partial failures.
 func (p *IptablesFaultProvider) UnfenceIP(ctx context.Context, targetCIDR string, params map[string]string) error {
 	clusterContext := p.getClusterContext()
 	Logf("[INFO]", "[%s] UnfenceIP: removing iptables block for CIDR %s (DaemonSet %s)", clusterContext, targetCIDR, IptablesDaemonSetName)
@@ -231,17 +224,12 @@ func (p *IptablesFaultProvider) UnfenceIP(ctx context.Context, targetCIDR string
 	Logf("[DEBUG]", "[%s] Removing iptables fence rule for CIDR %s from DaemonSet pods", clusterContext, targetCIDR)
 	if err := p.executeIptablesCommand(ctx, targetCIDR, "unfence"); err != nil {
 		Logf("[ERROR]", "[%s] Failed to add iptables unfence rule for IP %s to DaemonSet %s: %v", clusterContext, targetCIDR, IptablesDaemonSetName, err)
-		if sweepErr := p.removeCSIAddonsStagedRejectRulesOnAllManagerPods(ctx); sweepErr != nil {
-			Logf("[WARNING]", "best-effort staged REJECT sweep after unfence exec error: %v", sweepErr)
-		} else {
-			Logf("[INFO]", "best-effort staged REJECT sweep ran after unfence exec error (may have cleared rules on remaining nodes)")
-		}
 		return fmt.Errorf("[%s] failed to add iptables unfence rule to %s: %w", clusterContext, IptablesDaemonSetName, err)
 	}
 
 	p.removeFromActiveRules(targetCIDR)
 
-	// Event reflects iptables unfence success above, not ConfigMap sync (may warn below).
+	// Record event + ConfigMap after unfencing the API/control-plane node, so API calls succeed.
 	p.emitIptablesFenceEvent(ctx, EventReasonIptablesFenceRemoved, fmt.Sprintf(
 		"Removed OUTPUT+FORWARD REJECT for %s (workload namespace %q)", targetCIDR, p.config.Namespace))
 	if err := p.syncFenceStateConfigMap(ctx); err != nil {
@@ -413,14 +401,6 @@ func (p *IptablesFaultProvider) fetchProbeJobLogs(ctx context.Context, namespace
 		return "", fmt.Errorf("get pod logs %s: %w", podName, err)
 	}
 	return string(raw), nil
-}
-
-// SweepResidualFenceRules runs the same best-effort cleanup as the staged REJECT sweep at the end of
-// Cleanup (removeCSIAddonsStagedRejectRulesOnAllManagerPods). Call after UnfenceIP when replication
-// or resync must proceed on the data path: per-pod iptables -D can miss rules on some nodes, or
-// nft/legacy quirks can leave matching REJECT lines until this sweep runs.
-func (p *IptablesFaultProvider) SweepResidualFenceRules(ctx context.Context) error {
-	return p.removeCSIAddonsStagedRejectRulesOnAllManagerPods(ctx)
 }
 
 func (p *IptablesFaultProvider) Cleanup(ctx context.Context) error {
@@ -1078,6 +1058,60 @@ func (p *IptablesFaultProvider) removeFromActiveRules(targetCIDR string) {
 	}
 }
 
+// parseTargetCIDRWithPort parses CIDR:port format and returns (cidr, port, error).
+// Format examples: "192.168.1.10/32:6800" -> ("192.168.1.10/32", "6800", nil)
+//
+//	"192.168.1.10/32" -> ("192.168.1.10/32", "", nil)
+func parseTargetCIDRWithPort(target string) (string, string, error) {
+	// Split by the last colon (IPv6 addresses have colons in the CIDR part)
+	idx := strings.LastIndex(target, ":")
+	if idx <= 0 {
+		// No port specified
+		return target, "", nil
+	}
+
+	cidrPart := target[:idx]
+	portPart := target[idx+1:]
+
+	// Validate that portPart is numeric and cidrPart looks like a CIDR
+	if _, err := strconv.Atoi(portPart); err != nil {
+		// Not a port number - treat as part of the CIDR
+		return target, "", nil
+	}
+
+	// Verify cidrPart has a /prefix
+	if !strings.Contains(cidrPart, "/") {
+		return target, "", nil
+	}
+
+	return cidrPart, portPart, nil
+}
+
+// buildIptablesRuleCommand builds iptables rule command with optional port specification.
+// Example with port: iptables -I OUTPUT -d 192.168.1.10/32 -p tcp --dport 6800 -j REJECT ...
+// Example without port: iptables -I OUTPUT -d 192.168.1.10/32 -j REJECT ...
+func buildIptablesRuleCommand(action, chain, cidr, port string) string {
+	portSpec := ""
+	if port != "" {
+		portSpec = fmt.Sprintf(" -p tcp --dport %s", port)
+	}
+
+	return fmt.Sprintf("$IPT_CMD -C %s -d %s%s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || \\\n"+
+		"$IPT_CMD -I %s -d %s%s -j REJECT --reject-with icmp-host-unreachable",
+		chain, cidr, portSpec, chain, cidr, portSpec)
+}
+
+// buildIptablesDeleteCommand builds iptables delete rule command with optional port specification.
+func buildIptablesDeleteCommand(chain, cidr, port string) string {
+	portSpec := ""
+	if port != "" {
+		portSpec = fmt.Sprintf(" -p tcp --dport %s", port)
+	}
+
+	return fmt.Sprintf("$IPT_CMD -D %s -d %s%s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || true",
+		chain, cidr, portSpec)
+}
+
 // executeIptablesCommand executes iptables commands directly on DaemonSet pods via kubectl exec
 func (p *IptablesFaultProvider) executeIptablesCommand(ctx context.Context, targetCIDR, action string) error {
 	clusterContext := p.getClusterContext()
@@ -1136,21 +1170,43 @@ func (p *IptablesFaultProvider) executeIptablesCommand(ctx context.Context, targ
 
 	switch action {
 	case "fence":
+		// Parse CIDR:port format
+		cidr, port, err := parseTargetCIDRWithPort(targetCIDR)
+		if err != nil {
+			return fmt.Errorf("parse target CIDR format: %w", err)
+		}
+
+		if port != "" {
+			Logf("[INFO]", "[%s] FenceIP: using port-aware blocking for %s (port %s)", clusterContext, cidr, port)
+		}
+
+		// Build fence rules for both OUTPUT and FORWARD chains
+		outputRule := buildIptablesRuleCommand("fence", "OUTPUT", cidr, port)
+		forwardRule := buildIptablesRuleCommand("fence", "FORWARD", cidr, port)
+
 		command = baseCommand + fmt.Sprintf(`
-			echo "[$(date)] Fencing %s (OUTPUT+FORWARD: pod traffic uses FORWARD; host uses OUTPUT)"
-			$IPT_CMD -C OUTPUT -d %s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || \
-			$IPT_CMD -I OUTPUT -d %s -j REJECT --reject-with icmp-host-unreachable
-			$IPT_CMD -C FORWARD -d %s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || \
-			$IPT_CMD -I FORWARD -d %s -j REJECT --reject-with icmp-host-unreachable
+			echo "[$(date)] Fencing %s (with%s port %s; OUTPUT+FORWARD: pod traffic uses FORWARD; host uses OUTPUT)"
+			%s
+			%s
 			echo "[$(date)] Fenced: %s"
-		`, targetCIDR, targetCIDR, targetCIDR, targetCIDR, targetCIDR, targetCIDR)
+		`, cidr, map[bool]string{true: "", false: "out"}[port != ""], port, outputRule, forwardRule, cidr)
 	case "unfence":
+		// Parse CIDR:port format
+		cidr, port, err := parseTargetCIDRWithPort(targetCIDR)
+		if err != nil {
+			return fmt.Errorf("parse target CIDR format: %w", err)
+		}
+
+		// Build unfence (delete) rules for both chains
+		outputDelete := buildIptablesDeleteCommand("OUTPUT", cidr, port)
+		forwardDelete := buildIptablesDeleteCommand("FORWARD", cidr, port)
+
 		command = baseCommand + fmt.Sprintf(`
 			echo "[$(date)] Unfencing %s"
-			$IPT_CMD -D OUTPUT -d %s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || true
-			$IPT_CMD -D FORWARD -d %s -j REJECT --reject-with icmp-host-unreachable 2>/dev/null || true
+			%s
+			%s
 			echo "[$(date)] Unfenced: %s"
-		`, targetCIDR, targetCIDR, targetCIDR, targetCIDR)
+		`, cidr, outputDelete, forwardDelete, cidr)
 	default:
 		return fmt.Errorf("invalid action: %s", action)
 	}

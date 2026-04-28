@@ -143,7 +143,7 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 - **macOS**: `brew install yamllint`
 - **Ubuntu/Debian**: `apt-get install yamllint`
 - **Fedora/RHEL**: `dnf install yamllint`
-- **Python/pip**: `pip install yamllint`
+- **Python/pip**: `pip install yamllint` (the hook also uses `python3 -m yamllint` if the `yamllint` binary is not on `PATH`)
 - **Other**: See [yamllint on GitHub](https://github.com/adrienverge/yamllint)
 
 ### Installing shfmt (Recommended)
@@ -155,9 +155,9 @@ Git commit --no-verify -m "WIP: fixing linting issues"
 
 ### Installing markdownlint (Recommended)
 
-- **Node.js**: `npm install -g markdownlint`
-- **Ubuntu/Debian**: May be available as `node-markdownlint`
-- **Python**: `pip install markdownlint` (or `mdl`)
+- **Node.js**: `npm install -g markdownlint-cli` (the hook runs `markdownlint` on `PATH`, or `npx markdownlint-cli` if only Node/npx is available)
+- **Ubuntu/Debian**: May ship `markdownlint` as `node-markdownlint`
+- **Python**: `pip install markdownlint` (or `mdl`) — not used by the hook; prefer **markdownlint-cli** for CI parity
 
 **Note:** If a tool for a given file type is missing, the hook warns and **skips** that check (for example no `markdownlint` means **Markdown** is not validated locally). Install all recommended tools so local runs match `.github/workflows/lint-extras.yaml` for shell, YAML, and Markdown.
 

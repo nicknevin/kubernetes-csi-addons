@@ -8,109 +8,109 @@ you may not use this file except in compliance with the License.
 package helpers
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"testing"
 )
 
-func TestIsIptablesBaselineSkipEnvironmentError(t *testing.T) {
-	if !IsIptablesBaselineSkipEnvironmentError(fmt.Errorf("connectivity baseline: no probe succeeded for x")) {
-		t.Fatal("expected skip for no probe succeeded")
-	}
-	if !IsIptablesBaselineSkipEnvironmentError(fmt.Errorf("cannot verify fencing")) {
-		t.Fatal("expected skip for cannot verify fencing")
-	}
-	if IsIptablesBaselineSkipEnvironmentError(fmt.Errorf("kube API timeout")) {
-		t.Fatal("unexpected skip for unrelated error")
-	}
-	if IsIptablesBaselineSkipEnvironmentError(nil) {
-		t.Fatal("nil should not be skip")
-	}
-}
-
-// mockBaselineProvider embeds NoOpFaultProvider and overrides EstablishConnectivityBaseline only.
-type mockBaselineProvider struct {
-	NoOpFaultProvider
-	establish func(ctx context.Context, cidr string) (*ConnectivityBaseline, error)
-}
-
-func (m *mockBaselineProvider) EstablishConnectivityBaseline(ctx context.Context, cidr string) (*ConnectivityBaseline, error) {
-	if m.establish != nil {
-		return m.establish(ctx, cidr)
-	}
-	return m.NoOpFaultProvider.EstablishConnectivityBaseline(ctx, cidr)
-}
-
-func TestEstablishIptablesConnectivityBaselines_nonIptables(t *testing.T) {
-	ctx := context.Background()
-	m, err := EstablishIptablesConnectivityBaselines(ctx, FaultInjectorNetworkFence, nil, []string{"10.0.0.1/32"})
-	if err != nil || m != nil {
-		t.Fatalf("got (%v, %v), want (nil, nil)", m, err)
-	}
-}
-
-func TestEstablishIptablesConnectivityBaselines_iptablesNilProvider(t *testing.T) {
-	ctx := context.Background()
-	_, err := EstablishIptablesConnectivityBaselines(ctx, FaultInjectorIptables, nil, []string{"10.0.0.1/32"})
-	if err == nil {
-		t.Fatal("expected error for nil provider")
-	}
-}
-
-func TestEstablishIptablesConnectivityBaselines_skipEnvironment(t *testing.T) {
-	ctx := context.Background()
-	p := &mockBaselineProvider{
-		establish: func(ctx context.Context, cidr string) (*ConnectivityBaseline, error) {
-			return nil, fmt.Errorf("connectivity baseline: no probe succeeded for %s — cannot verify fencing", cidr)
+func TestParseConnectivityBaselineFromLog(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		log     string
+		wantP   bool
+		wantR   bool
+		wantTr  bool
+		wantErr bool
+	}{
+		{
+			name:   "standard line",
+			log:    "foo\nCSI_BASELINE ping=1 ip_route=0 traceroute=1\n",
+			wantP:  true,
+			wantR:  false,
+			wantTr: true,
+		},
+		{
+			name:    "missing line",
+			log:     "no marker here\n",
+			wantErr: true,
 		},
 	}
-	_, err := EstablishIptablesConnectivityBaselines(ctx, FaultInjectorIptables, p, []string{"192.0.2.1/32"})
-	if !errors.Is(err, ErrIptablesBaselineSkipEnvironment) {
-		t.Fatalf("got %v want %v", err, ErrIptablesBaselineSkipEnvironment)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := ParseConnectivityBaselineFromLog("192.0.2.1", tc.log)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.TargetIP != "192.0.2.1" {
+				t.Errorf("TargetIP: got %q", b.TargetIP)
+			}
+			if b.PingOK != tc.wantP || b.IPRouteOK != tc.wantR || b.TracerouteOK != tc.wantTr {
+				t.Fatalf("got ping=%v route=%v trace=%v", b.PingOK, b.IPRouteOK, b.TracerouteOK)
+			}
+		})
 	}
 }
 
-func TestEstablishIptablesConnectivityBaselines_fatal(t *testing.T) {
-	ctx := context.Background()
-	p := &mockBaselineProvider{
-		establish: func(ctx context.Context, cidr string) (*ConnectivityBaseline, error) {
-			return nil, fmt.Errorf("apiserver unavailable")
-		},
+func TestConnectivityBaseline_AnyProbeSucceeded(t *testing.T) {
+	t.Parallel()
+	if (&ConnectivityBaseline{}).AnyProbeSucceeded() {
+		t.Fatal("empty baseline should be false")
 	}
-	_, err := EstablishIptablesConnectivityBaselines(ctx, FaultInjectorIptables, p, []string{"192.0.2.1/32"})
-	if err == nil || errors.Is(err, ErrIptablesBaselineSkipEnvironment) {
-		t.Fatalf("expected fatal error, got %v", err)
+	b := &ConnectivityBaseline{PingOK: true}
+	if !b.AnyProbeSucceeded() {
+		t.Fatal("expected true")
 	}
 }
 
-func TestEstablishIptablesConnectivityBaselines_ok(t *testing.T) {
-	ctx := context.Background()
-	want := &ConnectivityBaseline{TargetIP: "192.0.2.1", PingOK: true}
-	p := &mockBaselineProvider{
-		establish: func(ctx context.Context, cidr string) (*ConnectivityBaseline, error) {
-			return want, nil
-		},
+func TestCompareProbeResultsToBaseline_Fenced(t *testing.T) {
+	t.Parallel()
+	before := &ConnectivityBaseline{PingOK: true, IPRouteOK: true, TracerouteOK: false}
+	afterLoss := &ConnectivityBaseline{PingOK: false, IPRouteOK: false, TracerouteOK: false}
+	if !CompareProbeResultsToBaseline(before, afterLoss, true) {
+		t.Fatal("expected fenced match when ping/route lost")
 	}
-	m, err := EstablishIptablesConnectivityBaselines(ctx, FaultInjectorIptables, p, []string{"192.0.2.1/32"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m == nil || m["192.0.2.1/32"] != want {
-		t.Fatalf("map: %v", m)
+	afterStillPing := &ConnectivityBaseline{PingOK: true, IPRouteOK: false, TracerouteOK: false}
+	if CompareProbeResultsToBaseline(before, afterStillPing, true) {
+		t.Fatal("expected failure when ping still ok")
 	}
 }
 
-func TestBaselineForCIDR(t *testing.T) {
-	if BaselineForCIDR(nil, "x") != nil {
-		t.Fatal("nil map")
+func TestCompareProbeResultsToBaseline_Fenced_pingLossEnoughWhenTracerouteNoisy(t *testing.T) {
+	t.Parallel()
+	// Mirrors e2e: after fence, ping drops but ip route + traceroute probes can stay "true"
+	// (local route lookup; traceroute matches any hop line).
+	before := &ConnectivityBaseline{PingOK: true, IPRouteOK: true, TracerouteOK: true}
+	after := &ConnectivityBaseline{PingOK: false, IPRouteOK: true, TracerouteOK: true}
+	if !CompareProbeResultsToBaseline(before, after, true) {
+		t.Fatal("expected fenced match when baseline ping worked and ping fails after fence")
 	}
-	b := &ConnectivityBaseline{}
-	m := map[string]*ConnectivityBaseline{"10.0.0.1/32": b}
-	if BaselineForCIDR(m, "10.0.0.1/32") != b {
-		t.Fatal("lookup")
+}
+
+func TestCompareProbeResultsToBaseline_Reachable(t *testing.T) {
+	t.Parallel()
+	before := &ConnectivityBaseline{PingOK: true, IPRouteOK: false, TracerouteOK: true}
+	after := &ConnectivityBaseline{PingOK: true, IPRouteOK: false, TracerouteOK: true}
+	if !CompareProbeResultsToBaseline(before, after, false) {
+		t.Fatal("expected reachable match")
 	}
-	if BaselineForCIDR(m, "other") != nil {
-		t.Fatal("missing key")
+	afterBad := &ConnectivityBaseline{PingOK: false, IPRouteOK: false, TracerouteOK: true}
+	if CompareProbeResultsToBaseline(before, afterBad, false) {
+		t.Fatal("expected failure when ping lost after unfence")
+	}
+}
+
+func TestCompareProbeResultsToBaseline_Nil(t *testing.T) {
+	t.Parallel()
+	if CompareProbeResultsToBaseline(nil, &ConnectivityBaseline{}, true) {
+		t.Fatal("nil before should be false")
+	}
+	if CompareProbeResultsToBaseline(&ConnectivityBaseline{}, nil, true) {
+		t.Fatal("nil after should be false")
 	}
 }

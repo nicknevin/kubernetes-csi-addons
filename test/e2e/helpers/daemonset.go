@@ -47,10 +47,10 @@ const (
 func HasPrivilegedDaemonSetSupport(ctx context.Context, c client.Client) bool {
 	// Create a test DaemonSet name with timestamp to avoid conflicts
 	testName := fmt.Sprintf("%s-%d", DaemonSetTestNamePrefix, time.Now().Unix())
-	
+
 	// Try different namespaces in order of preference
 	testNamespaces := []string{"default", "kube-system"}
-	
+
 	for _, testNamespace := range testNamespaces {
 		// Create minimal privileged DaemonSet for testing
 		testDaemonSet := createTestPrivilegedDaemonSet(testName, testNamespace)
@@ -81,7 +81,7 @@ func HasPrivilegedDaemonSetSupport(ctx context.Context, c client.Client) bool {
 		Logf("[DEBUG]", "Privileged DaemonSet test successful in namespace %s", testNamespace)
 		return true
 	}
-	
+
 	// All namespaces failed
 	Logf("[DEBUG]", "Privileged DaemonSet creation failed in all tested namespaces")
 	return false
@@ -93,7 +93,7 @@ func createTestPrivilegedDaemonSet(name, namespace string) *appsv1.DaemonSet {
 	privileged := true
 	// Don't use host network as it might trigger additional security restrictions
 	hostNetwork := false
-	
+
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

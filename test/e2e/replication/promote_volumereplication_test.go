@@ -19,6 +19,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,9 +28,44 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	csiaddonsv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/csiaddons/v1alpha1"
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
 	"github.com/csi-addons/kubernetes-csi-addons/test/e2e/helpers"
 )
+
+// establishIptablesFenceBaselines records which probes (ping / ip route) succeed before fencing.
+// Skips only when the cluster path to the peer is unusable for baseline (no probe succeeded — e.g. ICMP blocked everywhere).
+// Timeouts, API errors, or missing CSI_BASELINE are test/infrastructure failures and fail the spec (not Skip).
+func establishIptablesFenceBaselines(ctx context.Context, faultProvider helpers.PeerFenceProvider, cidrs []string) map[string]*helpers.ConnectivityBaseline {
+	if helpers.GetFaultInjectorTypeFromEnv() != helpers.FaultInjectorIptables {
+		return nil
+	}
+	out := make(map[string]*helpers.ConnectivityBaseline, len(cidrs))
+	for _, cidr := range cidrs {
+		b, err := faultProvider.EstablishConnectivityBaseline(ctx, cidr)
+		if err != nil {
+			if iptablesBaselineErrIsSkipEnvironment(err) {
+				Skip("fence baseline: " + err.Error())
+			}
+			Fail(fmt.Sprintf("fence baseline failed (expected reachable path to peer before fence; fix probe/job or networking): %v", err), 1)
+		}
+		out[cidr] = b
+	}
+	return out
+}
+
+func iptablesBaselineErrIsSkipEnvironment(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "no probe succeeded") ||
+		strings.Contains(msg, "cannot verify fencing")
+}
+
+func fenceBaselineRef(m map[string]*helpers.ConnectivityBaseline, cidr string) *helpers.ConnectivityBaseline {
+	if m == nil {
+		return nil
+	}
+	return m[cidr]
+}
 
 var _ = Describe("PromoteVolumeReplication", func() {
 	var ctx context.Context
@@ -90,8 +126,13 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
+			var nfc *csiaddonsv1alpha1.NetworkFenceClass
+			var nf *csiaddonsv1alpha1.NetworkFence
+
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
+				DeleteNetworkFenceWithCleanup(cleanupCtx, cDR2, nf, vrDR2)
+				DeleteNetworkFenceClassWithCleanup(cleanupCtx, cDR2, nfc)
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -353,18 +394,13 @@ var _ = Describe("PromoteVolumeReplication", func() {
 		})
 	})
 
-	Describe("L1-PROM-003: Promote secondary to primary with peer unreachable (force=false)", func() {
-		It("L1-PROM-003: fence peer cluster → promote fails → unfence → promote succeeds", func() {
-			By("Starting L1-PROM-003: Promote secondary to primary with peer unreachable (force=false)")
+	Describe("L1-PROM-003: Promote secondary to primary with peer unreachable (unified FaultInjectionHandler)", func() {
+		It("L1-PROM-003: fence peer cluster → promote fails → unfence → promote succeeds (using FaultInjectionHandler)", func() {
+			By("Starting L1-PROM-003: Promote secondary to primary with peer unreachable (unified handler)")
 			SkipIfNotFullDR("L1-PROM-003", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
 			cDR2 := GetK8sClientForCluster(ClusterDR2)
-
-			By("Checking that fault injection capabilities are available")
-			if !IsNetworkFenceSupportAvailable() && !helpers.HasPrivilegedDaemonSetSupport(ctx, cDR2) {
-				Skip("L1-PROM-003 requires either NetworkFence support or privileged DaemonSet capabilities for iptables fault injection")
-			}
 
 			nsName := UniqueNamespace()
 			By("Creating namespace on both DR1 and DR2")
@@ -374,12 +410,12 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, cDR1, env, nsName)
 
 			By("Creating primary PVC and VR on DR1")
-			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-prom-003", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
+			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-prom-003a", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
-			vrcName := "vrc-prom-003-" + nsName
+			vrcName := "vrc-prom-003a-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
-			vrDR1 := CreateVolumeReplication(ctx, cDR1, nsName, "vr-dr1-prom-003", vrcName, pvcDR1.Name, replicationv1alpha1.Primary)
+			vrDR1 := CreateVolumeReplication(ctx, cDR1, nsName, "vr-dr1-prom-003a", vrcName, pvcDR1.Name, replicationv1alpha1.Primary)
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
@@ -387,31 +423,55 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			})
 
 			By("Creating secondary PVC and VR on DR2")
-			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-prom-003", func(p *corev1.PersistentVolumeClaim) {
+			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-prom-003a", func(p *corev1.PersistentVolumeClaim) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
-			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-prom-003", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
+			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-prom-003a", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
-			// Initialize fault injection provider for peer fencing
-			var faultProvider helpers.PeerFenceProvider
-			var err error
-			var cidrs []string
+			// 1. Create handler on DR2 with peer client DR1 for proper discovery
+			faultConfig := helpers.FaultInjectionConfig{
+				Client:     cDR2,
+				RESTConfig: GetRESTConfigDR2(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
+					"cluster_context": "DR2",
+					"image":           helpers.DefaultIptablesImageWithRegistry,
+					"secretName":      secretName,
+					"secretNamespace": secretNs,
+				},
+			}
+			if IsFullDRMode() {
+				faultConfig.PeerClient = cDR1
+			}
 
+			handler, err := helpers.NewFaultInjectionHandler(ctx, faultConfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create FaultInjectionHandler")
+
+			// 2. Check if fault injection is supported
+			supported, reason := handler.IsSupported(ctx)
+			if !supported {
+				Skip("L1-PROM-003: fault injection not supported: " + reason)
+			}
+
+			// 3. Discover targets FOR DR1 using the peer client (validates handler properly discovers for specific client)
+			By("[DR2] Discovering fence targets FOR DR1 cluster using DiscoverFenceTargetsForClient(ctx, cDR1)")
+			targets := handler.DiscoverFenceTargetsForClient(ctx, cDR1)
+			if len(targets) == 0 {
+				Skip("L1-PROM-003: could not discover targets for DR1; set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES")
+			}
+			Logf("[TEST]", "L1-PROM-003 fence targets for DR1: %v (handler will apply based on injector type)", targets)
+
+			// 4. Register cleanup (handler cleanup is called in deferred cleanup)
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				if faultProvider != nil {
-					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
-						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-003 cleanup: %v", err)
-					}
-					// Full provider teardown: unfence tracked CIDRs, staged REJECT sweep, ConfigMap — not only per-CIDR UnfenceIP.
-					_ = faultProvider.Cleanup(cleanupCtx)
-				}
+				_ = handler.Cleanup(cleanupCtx)
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -423,63 +483,11 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			if helpers.GetFaultInjectorTypeFromEnv() == helpers.FaultInjectorIptables {
-				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
-			} else {
-				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
-			}
-			if len(cidrs) == 0 {
-				Skip("L1-PROM-003 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
-			}
+			// 5. Apply fault injection (handler validates fence is active internally)
+			By(fmt.Sprintf("[DR2] Applying fault injection to targets: %v (handler validates fence is active)", targets))
+			Expect(handler.ApplyFence(ctx, targets)).To(Succeed(), "handler.ApplyFence")
 
-			By(fmt.Sprintf("[DR2] Using CIDRs for peer cluster fencing: %v", cidrs))
-
-			By("[DR2] Initializing fault injection provider")
-			faultProvider, err = helpers.NewFaultInjectionProvider(helpers.FaultInjectionConfig{
-				Type:       helpers.GetFaultInjectorTypeFromEnv(),
-				Client:     cDR2,
-				RESTConfig: GetRESTConfigDR2(),
-				Namespace:  nsName,
-				ProviderParams: map[string]string{
-					"provisioner":     env.Provisioner,
-					"cluster_context": "DR2",
-					"image":           helpers.DefaultIptablesImageWithRegistry,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
-
-			fenceBaselines := IptablesBaselinesOrGinkgoSkip(ctx, helpers.GetFaultInjectorTypeFromEnv(), faultProvider, cidrs)
-
-			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
-			By("[DR2] Fencing peer cluster to simulate network partition")
-			for _, cidr := range cidrs {
-				err = faultProvider.FenceIP(ctx, cidr, fenceParams)
-				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
-			}
-
-			// Verify that fencing is effective
-			var lastFenceVerifyReason string
-			Eventually(func() bool {
-				lastFenceVerifyReason = ""
-				for _, cidr := range cidrs {
-					fenced, err := faultProvider.VerifyConnectivity(ctx, cidr, true, helpers.BaselineForCIDR(fenceBaselines, cidr))
-					if err != nil {
-						lastFenceVerifyReason = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
-						return false
-					}
-					if !fenced {
-						lastFenceVerifyReason = fmt.Sprintf(
-							"probes for %s still match pre-fence reachability (expected partitioned vs baseline; see [DR2] VerifyConnectivity logs above)",
-							cidr)
-						return false
-					}
-				}
-				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
-				"L1-PROM-003: after iptables fence, DR2 connectivity jobs must show partition vs baseline within 2m (CIDRs %v). %s",
-				cidrs, lastFenceVerifyReason)
-
+			// 6. Attempt to promote secondary to primary while peer is fenced (force=false; should fail)
 			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=false; should fail)")
 			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
@@ -498,34 +506,11 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			Expect(vrDR2.Status.State).NotTo(Equal(replicationv1alpha1.PrimaryState),
 				"L1-PROM-003: VR state should not change to Primary when peer is unreachable with force=false")
 
-			By("[DR2] Unfencing peer cluster to restore connectivity")
-			for _, cidr := range cidrs {
-				err = faultProvider.UnfenceIP(ctx, cidr, fenceParams)
-				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
-			}
+			// 7. Remove fault injection (handler validates connectivity is restored internally)
+			By("[DR2] Removing fault injection (handler validates connectivity is restored)")
+			Expect(handler.RemoveFence(ctx)).To(Succeed(), "handler.RemoveFence")
 
-			// Verify connectivity is restored
-			var lastUnfenceVerifyReason003 string
-			Eventually(func() bool {
-				lastUnfenceVerifyReason003 = ""
-				for _, cidr := range cidrs {
-					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, helpers.BaselineForCIDR(fenceBaselines, cidr))
-					if err != nil {
-						lastUnfenceVerifyReason003 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
-						return false
-					}
-					if !connected {
-						lastUnfenceVerifyReason003 = fmt.Sprintf(
-							"probes for %s do not match reachable baseline yet after unfence (see [DR2] VerifyConnectivity logs above)",
-							cidr)
-						return false
-					}
-				}
-				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
-				"L1-PROM-003: after unfence, DR2 connectivity jobs must match pre-fence reachability within 2m (CIDRs %v). %s",
-				cidrs, lastUnfenceVerifyReason003)
-
+			// 8. Wait for RBD mirror and cluster to recover VR health
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
 				err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
@@ -546,6 +531,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}, 10*time.Minute, 10*time.Second).Should(BeTrue(),
 				"VR health should recover (Degraded=False) after unfencing within 10 minutes")
 
+			// 9. Wait for controller to retry and promote to succeed
 			By("[DR2] Waiting for controller to retry and promote to succeed")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR after unfence] %s\n", FormatVRStatus(v))
@@ -570,24 +556,13 @@ var _ = Describe("PromoteVolumeReplication", func() {
 		})
 	})
 
-	Describe("L1-PROM-004: Promote secondary to primary with peer unreachable (force=true)", func() {
-		It("L1-PROM-004: fence peer cluster → force promote succeeds → unfence → verify stability", func() {
-
-			By("Starting L1-PROM-004: Promote secondary to primary with peer unreachable (force=true)")
+	Describe("L1-PROM-004: Force promote secondary to primary with peer unreachable (unified FaultInjectionHandler)", func() {
+		It("L1-PROM-004: fence peer cluster → force promote succeeds → unfence → verify stability (using FaultInjectionHandler)", func() {
+			By("Starting L1-PROM-004: Force promote secondary to primary with peer unreachable (unified handler)")
 			SkipIfNotFullDR("L1-PROM-004", "requires two clusters (DR1_CONTEXT and DR2_CONTEXT)")
-
-			By("Checking that fault injection is available")
-			// Check that either NetworkFence or iptables fault injection is available
-			if !IsNetworkFenceSupportAvailable() && !helpers.HasPrivilegedDaemonSetSupport(ctx, GetK8sClient()) {
-				Skip("L1-PROM-004 requires either NetworkFence support or privileged DaemonSet capabilities for iptables fault injection")
-			}
 
 			cDR1 := GetK8sClientForCluster(ClusterDR1)
 			cDR2 := GetK8sClientForCluster(ClusterDR2)
-
-			// Initialize fault injection provider variables
-			var faultProvider helpers.PeerFenceProvider
-			var err error
 
 			nsName := UniqueNamespace()
 			By("Creating namespace on both DR1 and DR2")
@@ -597,12 +572,12 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			secretName, secretNs := ReplicationSecretRef(ctx, cDR1, env, nsName)
 
 			By("Creating primary PVC and VR on DR1")
-			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-prom-004", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
+			pvcDR1 := CreatePVC(ctx, cDR1, nsName, "pvc-dr1-prom-004a", env.StorageClass, "1Gi", func(p *corev1.PersistentVolumeClaim) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR1][PVC] %s\n", FormatPVCStatus(p))
 			})
-			vrcName := "vrc-prom-004-" + nsName
+			vrcName := "vrc-prom-004a-" + nsName
 			vrcDR1 := CreateVolumeReplicationClass(ctx, cDR1, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
-			vrDR1 := CreateVolumeReplication(ctx, cDR1, nsName, "vr-dr1-prom-004", vrcName, pvcDR1.Name, replicationv1alpha1.Primary)
+			vrDR1 := CreateVolumeReplication(ctx, cDR1, nsName, "vr-dr1-prom-004a", vrcName, pvcDR1.Name, replicationv1alpha1.Primary)
 
 			By("Waiting for primary VR on DR1 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR1, vrDR1, func(v *replicationv1alpha1.VolumeReplication) {
@@ -610,25 +585,56 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			})
 
 			By("Creating secondary PVC and VR on DR2")
-			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-prom-004", func(p *corev1.PersistentVolumeClaim) {
+			pvcDR2, pvDR2 := CreateSecondaryPVCFromPrimary(ctx, cDR1, cDR2, pvcDR1, nsName, "pvc-dr2-prom-004a", func(p *corev1.PersistentVolumeClaim) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][PVC] %s\n", FormatPVCStatus(p))
 			})
 			vrcDR2 := CreateVolumeReplicationClass(ctx, cDR2, vrcName, env.Provisioner, secretName, secretNs, MirroringModeSnapshot)
-			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-prom-004", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
+			vrDR2 := CreateVolumeReplication(ctx, cDR2, nsName, "vr-dr2-prom-004a", vrcName, pvcDR2.Name, replicationv1alpha1.Secondary)
 
 			By("Waiting for secondary VR on DR2 to reach Replicating=True")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR] %s\n", FormatVRStatus(v))
 			})
 
+			// 1. Create handler on DR2 with peer client DR1 for proper discovery
+			faultConfig := helpers.FaultInjectionConfig{
+				Client:     cDR2,
+				RESTConfig: GetRESTConfigDR2(),
+				Namespace:  nsName,
+				ProviderParams: map[string]string{
+					"provisioner":     env.Provisioner,
+					"cluster_context": "DR2",
+					"image":           helpers.DefaultIptablesImageWithRegistry,
+					"secretName":      secretName,
+					"secretNamespace": secretNs,
+				},
+			}
+			if IsFullDRMode() {
+				faultConfig.PeerClient = cDR1
+			}
+
+			handler, err := helpers.NewFaultInjectionHandler(ctx, faultConfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create FaultInjectionHandler")
+
+			// 2. Check if fault injection is supported
+			supported, reason := handler.IsSupported(ctx)
+			if !supported {
+				Skip("L1-PROM-004: fault injection not supported: " + reason)
+			}
+
+			// 3. Discover targets FOR peer DR1 (NOT from DR2 context - we want to fence DR1)
+			By("[DR2] Discovering fence targets FOR peer DR1 cluster using DiscoverFenceTargetsForClient(ctx, cDR1)")
+			targets := handler.DiscoverFenceTargetsForClient(ctx, cDR1)
+			if len(targets) == 0 {
+				Skip("L1-PROM-004: could not discover targets for peer DR1; set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES")
+			}
+			Logf("[TEST]", "L1-PROM-004: Discovered %d targets FOR peer DR1: %v (handler created on DR2 with Client=DR2, PeerClient=DR1)", len(targets), targets)
+			Logf("[TEST]", "L1-PROM-004: Handler config - Client=DR2 (local), PeerClient=DR1 (peer target discovery) (IsFullDRMode=%v)", IsFullDRMode())
+
+			// 4. Register cleanup (handler cleanup is called in deferred cleanup)
 			DeferCleanup(func() {
 				cleanupCtx := context.Background()
-				if faultProvider != nil {
-					if err := helpers.CollectFaultInjectionLogs(cleanupCtx, faultProvider); err != nil {
-						Logf("[WARNING]", "Failed to collect fault injection logs during L1-PROM-004 cleanup: %v", err)
-					}
-					_ = faultProvider.Cleanup(cleanupCtx)
-				}
+				_ = handler.Cleanup(cleanupCtx)
 				DeleteVolumeReplicationWithCleanup(cleanupCtx, cDR2, vrDR2)
 				DeleteVolumeReplicationClassWithCleanup(cleanupCtx, cDR2, vrcDR2)
 				DeletePVCWithCleanup(cleanupCtx, cDR2, pvcDR2)
@@ -640,98 +646,51 @@ var _ = Describe("PromoteVolumeReplication", func() {
 				DeleteNamespace(cleanupCtx, cDR2, ns2)
 			})
 
-			By("[DR2] Initializing fault injection provider")
-			faultConfig := helpers.FaultInjectionConfig{
-				Type:       helpers.GetFaultInjectorTypeFromEnv(),
-				Client:     cDR2,
-				RESTConfig: GetRESTConfigDR2(),
-				Namespace:  nsName,
-				ProviderParams: map[string]string{
-					"provisioner":     env.Provisioner,
-					"cluster_context": "DR2", // Help identify which cluster this is
-					"image":           helpers.DefaultIptablesImageWithRegistry,
-				},
-			}
-			faultProvider, err = helpers.NewFaultInjectionProvider(faultConfig)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create fault injection provider")
+			// 5. Apply fault injection (handler validates fence is active internally)
+			By(fmt.Sprintf("[DR2] Applying fault injection to targets: %v (handler validates fence is active)", targets))
+			Logf("[TEST]", "L1-PROM-004: Before ApplyFence - targets to be fenced: %v", targets)
+			applyErr := handler.ApplyFence(ctx, targets)
+			Logf("[TEST]", "L1-PROM-004: After ApplyFence - error: %v (should be nil)", applyErr)
+			Expect(applyErr).To(Succeed(), "handler.ApplyFence")
 
-			By("[DR2] Getting fence CIDRs for peer cluster nodes")
-			var cidrs []string
-			if helpers.GetFaultInjectorTypeFromEnv() == helpers.FaultInjectorIptables {
-				cidrs = GetFenceCIDRsForFaultInjectionPeer(ctx, cDR2, cDR1)
-			} else {
-				cidrs = GetFenceCIDRsWithPeerNodeClient(ctx, cDR2, cDR1, env.Provisioner, "")
-			}
-			if len(cidrs) == 0 {
-				Skip("L1-PROM-004 could not get CIDRs: for iptables set FENCE_CIDRS or FENCE_PEER_SERVICES/FENCE_TARGET_SERVICES; for NetworkFence set FENCE_CIDRS, wait for CSI client CIDRs, or ensure DR1 has node InternalIPs for fallback")
-			}
-
-			fenceBaselines := IptablesBaselinesOrGinkgoSkip(ctx, helpers.GetFaultInjectorTypeFromEnv(), faultProvider, cidrs)
-
-			fenceParams := map[string]string{"secretName": secretName, "secretNamespace": secretNs}
-			By("[DR2] Fencing peer cluster to block access")
-			for _, cidr := range cidrs {
-				err = faultProvider.FenceIP(ctx, cidr, fenceParams)
-				Expect(err).NotTo(HaveOccurred(), "Failed to fence CIDR %s", cidr)
-			}
-
-			By("[DR2] Attempting to promote secondary to primary while peer is fenced (force=true; should succeed)")
+			// 6. Attempt force promote (force=true; should succeed even with peer unreachable)
+			By("[DR2] Attempting force promote secondary to primary while peer is fenced (force=true; should succeed)")
 			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 			vrDR2.Spec.ReplicationState = replicationv1alpha1.Primary
 			err = cDR2.Update(ctx, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("[DR2] Waiting for VR to report success (Replicating or Completed with Promoted reason)")
+			By("[DR2] Waiting for VR to report success (Replicating or Completed)")
 			WaitForVolumeReplicationReplicatingOrCompleted(ctx, cDR2, vrDR2, func(v *replicationv1alpha1.VolumeReplication) {
 				_, _ = fmt.Fprintf(GinkgoWriter, "  [DR2][VR force promote] %s\n", FormatVRStatus(v))
 			})
 			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("[DR2] Waiting for VR state to transition to Primary (state change may be async after operation succeeds)")
+			By("[DR2] Waiting for VR state to transition to Primary")
 			Eventually(func() (replicationv1alpha1.State, error) {
 				err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 				return vrDR2.Status.State, err
 			}, 2*time.Minute, 5*time.Second).Should(Or(Equal(replicationv1alpha1.PrimaryState), Equal(replicationv1alpha1.UnknownState)),
-				"VR state should transition to Primary or Unknown after promote operation")
+				"VR state should transition to Primary or Unknown after force promote operation")
 			err = cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Assertions: L1-PROM-004 — force promote with peer down succeeds")
 			Expect(vrDR2.Status.State).To(Or(Equal(replicationv1alpha1.PrimaryState), Equal(replicationv1alpha1.UnknownState)),
-				"L1-PROM-004: VR state must transition to Primary or Unknown after force promote, got %q", vrDR2.Status.State)
+				"L1-PROM-004: VR state must be Primary or Unknown after force promote, got %q", vrDR2.Status.State)
 			Expect(hasReplicationSuccessCondition(vrDR2)).To(BeTrue(),
 				"L1-PROM-004: VR must have Replicating or Completed condition after force promote")
 
-			By("[DR2] Unfencing peer cluster to restore connectivity")
-			for _, cidr := range cidrs {
-				err = faultProvider.UnfenceIP(ctx, cidr, fenceParams)
-				Expect(err).NotTo(HaveOccurred(), "Failed to unfence CIDR %s", cidr)
-			}
+			// 7. Remove fault injection (handler validates connectivity is restored internally)
+			By("[DR2] Removing fault injection (handler validates connectivity is restored)")
+			Logf("[TEST]", "L1-PROM-004: Before RemoveFence - removing fence for targets: %v", targets)
+			removeErr := handler.RemoveFence(ctx)
+			Logf("[TEST]", "L1-PROM-004: After RemoveFence - error: %v (should be nil)", removeErr)
+			Expect(removeErr).To(Succeed(), "handler.RemoveFence")
 
-			// Verify connectivity is restored
-			var lastUnfenceVerifyReason004 string
-			Eventually(func() bool {
-				lastUnfenceVerifyReason004 = ""
-				for _, cidr := range cidrs {
-					connected, err := faultProvider.VerifyConnectivity(ctx, cidr, false, helpers.BaselineForCIDR(fenceBaselines, cidr))
-					if err != nil {
-						lastUnfenceVerifyReason004 = fmt.Sprintf("VerifyConnectivity failed for %s: %v", cidr, err)
-						return false
-					}
-					if !connected {
-						lastUnfenceVerifyReason004 = fmt.Sprintf(
-							"probes for %s do not match reachable baseline yet after unfence (see [DR2] VerifyConnectivity logs above)",
-							cidr)
-						return false
-					}
-				}
-				return true
-			}, 2*time.Minute, 10*time.Second).Should(BeTrue(),
-				"L1-PROM-004: after unfence, DR2 connectivity jobs must match pre-fence reachability within 2m (CIDRs %v). %s",
-				cidrs, lastUnfenceVerifyReason004)
-
+			// 8. Wait for RBD mirror and cluster to recover VR health
 			By("[DR2] Waiting for RBD mirror and cluster to recover VR health (Degraded=False)")
 			Eventually(func() bool {
 				err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)
@@ -752,6 +711,7 @@ var _ = Describe("PromoteVolumeReplication", func() {
 			}, 10*time.Minute, 10*time.Second).Should(BeTrue(),
 				"VR health should recover (Degraded=False) after unfencing within 10 minutes")
 
+			// 9. Verify VR remains stable after unfence
 			By("[DR2] Verifying VR remains stable after unfence")
 			Eventually(func() (replicationv1alpha1.State, error) {
 				err := cDR2.Get(ctx, client.ObjectKey{Namespace: nsName, Name: vrDR2.Name}, vrDR2)

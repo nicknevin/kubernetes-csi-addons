@@ -4,7 +4,7 @@ Here's a comprehensive index of the documentation with descriptions organized by
 
 ## 📋 Documentation Tree Structure
 
-```
+```plaintext
 docs/
 ├── 🔧 Configuration & Deployment
 │   ├── ci.md

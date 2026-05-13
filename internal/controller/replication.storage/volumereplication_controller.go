@@ -31,7 +31,6 @@ import (
 	"github.com/csi-addons/kubernetes-csi-addons/internal/proto"
 	"github.com/csi-addons/kubernetes-csi-addons/internal/util"
 
-	"github.com/csi-addons/spec/lib/go/identity"
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc/codes"
 	corev1 "k8s.io/api/core/v1"
@@ -203,7 +202,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		logger.Info("Replication handle", "ReplicationHandleName", replicationHandle)
 	}
 
-	replicationClient, err := r.getReplicationClient(ctx, vrcObj.Spec.Provisioner, instance.Spec.DataSource.Kind)
+	replicationClient, destinationInfoSupported, err := getReplicationClient(ctx, r, vrcObj.Spec.Provisioner, instance.Spec.DataSource.Kind)
 	if err != nil {
 		logger.Error(err, "Failed to get ReplicationClient")
 
@@ -307,15 +306,17 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
-	if err = r.ensureReplicationDestinationCondition(ctx, vr, vrcObj.Spec.Provisioner); err != nil {
-		logger.Error(err, "failed to ensure replication destination condition")
-		msg := replication.GetMessageFromError(err)
-		uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
-		if uErr != nil {
-			logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+	if destinationInfoSupported {
+		if err = r.ensureReplicationDestinationCondition(vr); err != nil {
+			logger.Error(err, "failed to ensure replication destination condition")
+			msg := replication.GetMessageFromError(err)
+			uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
+			if uErr != nil {
+				logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
+			}
 
-		return reconcile.Result{}, err
+			return reconcile.Result{}, err
+		}
 	}
 
 	instance.Status.LastStartTime = getCurrentTime()
@@ -568,54 +569,6 @@ func getInfoReconcileInterval(parameters map[string]string, logger logr.Logger) 
 	return scheduleTime / 2
 }
 
-func (r *VolumeReplicationReconciler) getReplicationClient(ctx context.Context, driverName, dataSource string) (grpcClient.VolumeReplication, error) {
-	conn, err := r.Connpool.GetLeaderByDriver(ctx, r.Client, driverName)
-	if err != nil {
-		return nil, fmt.Errorf("no leader for the ControllerService of driver %q: %w", driverName, err)
-	}
-
-	for _, cap := range conn.Capabilities {
-		// validate if VOLUME_REPLICATION capability is supported by the driver.
-		if cap.GetVolumeReplication() == nil {
-			continue
-		}
-
-		// validate of VOLUME_REPLICATION capability is enabled by the storage driver.
-		if cap.GetVolumeReplication().GetType() == identity.Capability_VolumeReplication_VOLUME_REPLICATION {
-			switch dataSource {
-			case pvcDataSource:
-				return grpcClient.NewVolumeReplicationClient(conn.Client, r.Timeout), nil
-			case volumeGroupReplicationDataSource:
-				return grpcClient.NewVolumeGroupReplicationClient(conn.Client, r.Timeout), nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("leading CSIAddonsNode %q for driver %q does not support VolumeReplication", conn.Name, driverName)
-
-}
-
-// supportsGetReplicationDestinationInfo checks if the driver supports the
-// GET_REPLICATION_DESTINATION_INFO capability.
-func (r *VolumeReplicationReconciler) supportsGetReplicationDestinationInfo(ctx context.Context, driverName string) (bool, error) {
-	conn, err := r.Connpool.GetLeaderByDriver(ctx, r.Client, driverName)
-	if err != nil {
-		return false, err
-	}
-
-	for _, cap := range conn.Capabilities {
-		if cap.GetVolumeReplication() == nil {
-			continue
-		}
-
-		if cap.GetVolumeReplication().GetType() == identity.Capability_VolumeReplication_GET_REPLICATION_DESTINATION_INFO {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 func (r *VolumeReplicationReconciler) updateReplicationStatus(
 	instance *replicationv1alpha1.VolumeReplication,
 	logger logr.Logger,
@@ -838,20 +791,13 @@ func (r *VolumeReplicationReconciler) getVolumeReplicationInfo(vr *volumeReplica
 	return infoResponse, nil
 }
 
-func (r *VolumeReplicationReconciler) ensureReplicationDestinationCondition(ctx context.Context, vr *volumeReplicationInstance, provisioner string) error {
+func (r *VolumeReplicationReconciler) ensureReplicationDestinationCondition(vr *volumeReplicationInstance) error {
 	cond := findCondition(vr.instance.Status.Conditions, v1alpha1.ConditionDestinationInfoAvailable)
 	if cond == nil {
-		supported, err := r.supportsGetReplicationDestinationInfo(ctx, provisioner)
+		setDestinationInfoPendingCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind)
+		err := r.updateReplicationStatus(vr.instance, vr.logger, GetCurrentReplicationState(vr.instance.Status.State), "destination info pending retrieval")
 		if err != nil {
 			return err
-		}
-		vr.logger.Info("ensureReplicationDestinationCondition", "supported", supported)
-		if supported {
-			setDestinationInfoPendingCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind)
-			err = r.updateReplicationStatus(vr.instance, vr.logger, GetCurrentReplicationState(vr.instance.Status.State), "destination info pending retrieval")
-			if err != nil {
-				return err
-			}
 		}
 	}
 	return nil

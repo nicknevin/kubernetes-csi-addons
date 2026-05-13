@@ -290,13 +290,13 @@ func (rs *ReplicationServer) GetReplicationDestinationInfo(
 
 	resp, err := rs.controllerClient.GetReplicationDestinationInfo(ctx, repReq)
 	if err != nil {
-		logger.Error(err, "Failed to get volume replication info")
+		logger.Error(err, "Failed to get replication destination info")
 		return nil, err
 	}
 
 	dest, err := convertReplicationDestination(resp.GetReplicationDestination())
 	if err != nil {
-		logger.Error(err, "Failed to convert replication destination")
+		logger.Error(err, "Failed to convert replication destination info")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 

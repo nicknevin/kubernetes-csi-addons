@@ -44,7 +44,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	replicationv1alpha1 "github.com/csi-addons/kubernetes-csi-addons/api/replication.storage/v1alpha1"
+	conn "github.com/csi-addons/kubernetes-csi-addons/internal/connection"
 	"github.com/csi-addons/kubernetes-csi-addons/internal/controller/replication.storage/replication"
+	"github.com/csi-addons/spec/lib/go/identity"
 )
 
 const (
@@ -66,6 +68,10 @@ type VolumeGroupReplicationReconciler struct {
 	log              logr.Logger
 	Recorder         events.EventRecorder
 	MaxGroupPVCCount int
+	// ConnectionPool consists of map of Connection objects
+	Connpool *conn.ConnectionPool
+	// Timeout for the Reconcile operation.
+	Timeout time.Duration
 }
 
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -212,12 +218,19 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 			return reconcile.Result{}, err
 		}
 
+		destinationInfoSupported, err := r.supportsGetReplicationDestinationInfo(vgrClassObj.Spec.Provisioner)
+		if err != nil {
+			_ = r.setGroupReplicationFailure(instance, err)
+			return reconcile.Result{}, err
+		}
+
+		if destinationInfoSupported {
+			r.updateReplicationDestinationCondition(instance, vgrContentObj.Status.PersistentVolumeMappingList)
+		}
+
 		// Update PersistentVolumeClaimsRefList in VGR Status
 		if !reflect.DeepEqual(instance.Status.PersistentVolumeClaimsRefList, pvcRefList) {
 			instance.Status.PersistentVolumeClaimsRefList = pvcRefList
-			// Mark destination info as stale since group membership changed
-			setDestinationInfoPendingCondition(&instance.Status.Conditions,
-				instance.Generation, volumeGroupReplicationDataSource)
 			err = r.Status().Update(ctx, instance)
 			if err != nil {
 				r.log.Error(err, "failed to update VolumeGroupReplication resource")
@@ -328,24 +341,6 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	instance.Status.ObservedGeneration = instance.Generation
 	for i := range instance.Status.Conditions {
 		instance.Status.Conditions[i].ObservedGeneration = instance.Generation
-	}
-
-	// Validate VGRContent destination info and signal readiness on VGR.
-	// If PersistentVolumeMappingList is populated in VGRContent.Status and every
-	// entry has a DestinationVolumeHandle, the destination info is complete.
-	if !isDestinationInfoAvailable(instance.Status.Conditions) &&
-		len(vgrContentObj.Status.PersistentVolumeMappingList) > 0 {
-		allCovered := true
-		for _, pvMapping := range vgrContentObj.Status.PersistentVolumeMappingList {
-			if pvMapping.DestinationVolumeHandle == "" {
-				allCovered = false
-				break
-			}
-		}
-		if allCovered {
-			setDestinationInfoAvailableCondition(&instance.Status.Conditions,
-				instance.Generation, volumeGroupReplicationDataSource)
-		}
 	}
 
 	err = r.Status().Update(ctx, instance)
@@ -840,4 +835,48 @@ func (r *VolumeGroupReplicationReconciler) cleanupVR(vgr *replicationv1alpha1.Vo
 	}
 
 	return err
+}
+
+func (r *VolumeGroupReplicationReconciler) updateReplicationDestinationCondition(vgr *replicationv1alpha1.VolumeGroupReplication,
+	persistentVolumeMappingList []replicationv1alpha1.PersistentVolumeMapping) {
+	if persistentVolumeMappingList != nil {
+		allCovered := true
+		for _, pvMapping := range persistentVolumeMappingList {
+			if pvMapping.DestinationVolumeHandle == "" {
+				allCovered = false
+				break
+			}
+		}
+		if allCovered {
+			// The PersistentVolumeMappingList is populated in VGRContent.Status and every
+			// entry has a DestinationVolumeHandle, hence the destination info is complete.
+			setDestinationInfoAvailableCondition(&vgr.Status.Conditions, vgr.Generation, volumeGroupReplicationDataSource)
+			return
+		}
+	}
+
+	setDestinationInfoPendingCondition(&vgr.Status.Conditions, vgr.Generation, volumeGroupReplicationDataSource)
+}
+
+func (r *VolumeGroupReplicationReconciler) supportsGetReplicationDestinationInfo(driverName string) (bool, error) {
+	if r.Connpool == nil {
+		return false, nil
+	}
+
+	conn, err := r.Connpool.GetLeaderByDriver(r.ctx, r.Client, driverName)
+	if err != nil {
+		return false, err
+	}
+
+	for _, cap := range conn.Capabilities {
+		if cap.GetVolumeReplication() == nil {
+			continue
+		}
+
+		if cap.GetVolumeReplication().GetType() == identity.Capability_VolumeReplication_GET_REPLICATION_DESTINATION_INFO {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

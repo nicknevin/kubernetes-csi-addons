@@ -194,7 +194,7 @@ spec:
                     volumeHandle:
                       description: |-
                         VolumeHandle is the CSI volume handle of this PV on the
-                        source/primary cluster (i.e. PV.Spec.CSI.VolumeHandle).
+                        source cluster (i.e. PV.Spec.CSI.VolumeHandle).
                       type: string
                   required:
                   - name

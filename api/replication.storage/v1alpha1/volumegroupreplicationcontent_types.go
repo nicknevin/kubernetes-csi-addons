@@ -87,7 +87,7 @@ type PersistentVolumeMapping struct {
 	Name string `json:"name"`
 
 	// VolumeHandle is the CSI volume handle of this PV on the
-	// source/primary cluster (i.e. PV.Spec.CSI.VolumeHandle).
+	// source cluster (i.e. PV.Spec.CSI.VolumeHandle).
 	VolumeHandle string `json:"volumeHandle"`
 
 	// DestinationVolumeHandle is the CSI volume handle on the

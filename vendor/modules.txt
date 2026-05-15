@@ -22,7 +22,7 @@ github.com/cespare/xxhash/v2
 # github.com/container-storage-interface/spec v1.12.0
 ## explicit; go 1.23.0
 github.com/container-storage-interface/spec/lib/go/csi
-# github.com/csi-addons/spec v0.2.1-0.20250610152019-b5a7205f6a79 => github.com/nicknevin/spec v0.0.0-20260512125058-80294162b6bb
+# github.com/csi-addons/spec v0.2.1-0.20260515055340-d4a373713b9a
 ## explicit
 github.com/csi-addons/spec/lib/go/encryptionkeyrotation
 github.com/csi-addons/spec/lib/go/fence
@@ -1225,4 +1225,3 @@ sigs.k8s.io/structured-merge-diff/v6/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
-# github.com/csi-addons/spec => github.com/nicknevin/spec v0.0.0-20260512125058-80294162b6bb

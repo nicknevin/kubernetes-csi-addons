@@ -88,7 +88,7 @@ type VolumeReplicationReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx, "Request.Name", req.Name, "Request.Namespace", req.Namespace)
+	logger := log.FromContext(ctx)
 
 	// Fetch VolumeReplication instance
 	instance := &replicationv1alpha1.VolumeReplication{}
@@ -110,10 +110,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	vrcObj, err := r.getVolumeReplicationClass(logger, instance.Spec.VolumeReplicationClass)
 	if err != nil {
 		setFailureCondition(instance, "failed to get volumeReplication class", err.Error(), instance.Spec.DataSource.Kind)
-		uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
-		if uErr != nil {
-			logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
 
 		return ctrl.Result{}, err
 	}
@@ -122,10 +119,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		logger.Error(err, "failed to validate parameters of volumeReplicationClass", "VRCName", instance.Spec.VolumeReplicationClass)
 		setFailureCondition(instance, "failed to validate parameters of volumeReplicationClass", err.Error(), instance.Spec.DataSource.Kind)
-		uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
-		if uErr != nil {
-			logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
 
 		return ctrl.Result{}, err
 	}
@@ -158,10 +152,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if pvErr != nil {
 			logger.Error(pvErr, "failed to get PVC", "PVCName", instance.Spec.DataSource.Name)
 			setFailureCondition(instance, "failed to find PVC", pvErr.Error(), instance.Spec.DataSource.Name)
-			uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), pvErr.Error())
-			if uErr != nil {
-				logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-			}
+			_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), pvErr.Error())
 
 			return ctrl.Result{}, pvErr
 		}
@@ -177,10 +168,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 			logger.Error(vgrErr, "failed to get VolumeGroupReplication", "VGRName", instance.Spec.DataSource.Name)
 			setFailureCondition(instance, "failed to get VolumeGroupReplication", vgrErr.Error(), instance.Spec.DataSource.Name)
-			uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), vgrErr.Error())
-			if uErr != nil {
-				logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-			}
+			_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), vgrErr.Error())
 			return ctrl.Result{}, vgrErr
 		}
 		groupHandle = vgrc.Spec.VolumeGroupReplicationHandle
@@ -189,10 +177,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		err = fmt.Errorf("unsupported datasource kind")
 		logger.Error(err, "given kind not supported", "Kind", instance.Spec.DataSource.Kind)
 		setFailureCondition(instance, "unsupported datasource", err.Error(), "")
-		uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
-		if uErr != nil {
-			logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), err.Error())
 
 		return ctrl.Result{}, nil
 	}
@@ -316,10 +301,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if err = r.ensureReplicationDestinationCondition(vr); err != nil {
 			logger.Error(err, "failed to ensure replication destination condition")
 			msg := replication.GetMessageFromError(err)
-			uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
-			if uErr != nil {
-				logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-			}
+			_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
 
 			return reconcile.Result{}, err
 		}
@@ -339,10 +321,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if err = r.enableReplication(vr); err != nil {
 				logger.Error(err, "failed to enable replication")
 				msg := replication.GetMessageFromError(err)
-				uErr := r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
-				if uErr != nil {
-					logger.Error(uErr, "failed to update volumeReplication status", "VRName", instance.Name)
-				}
+				_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
 
 				return reconcile.Result{}, err
 			}
@@ -393,10 +372,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		replicationErr = fmt.Errorf("unsupported volume state")
 		logger.Error(replicationErr, "given volume state is not supported", "ReplicationState", instance.Spec.ReplicationState)
 		setFailureCondition(instance, "unsupported volume state", replicationErr.Error(), instance.Spec.DataSource.Kind)
-		err = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), replicationErr.Error())
-		if err != nil {
-			logger.Error(err, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), replicationErr.Error())
 
 		return ctrl.Result{}, nil
 	}
@@ -404,10 +380,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if replicationErr != nil {
 		msg := replication.GetMessageFromError(replicationErr)
 		logger.Error(replicationErr, "failed to Replicate", "ReplicationState", instance.Spec.ReplicationState)
-		err = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
-		if err != nil {
-			logger.Error(err, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), msg)
 
 		if instance.Status.State == replicationv1alpha1.SecondaryState {
 			return ctrl.Result{
@@ -426,10 +399,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		updatedConditions := removeCondition(&vr.instance.Status.Conditions, replicationv1alpha1.ConditionReplicating)
 		vr.instance.Status.Conditions = updatedConditions
 
-		err = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), "volume is degraded")
-		if err != nil {
-			logger.Error(err, "failed to update volumeReplication status", "VRName", instance.Name)
-		}
+		_ = r.updateReplicationStatus(instance, logger, GetCurrentReplicationState(instance.Status.State), "volume is degraded")
 
 		return ctrl.Result{
 			Requeue: true,
@@ -480,10 +450,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			logger.Error(err, "Failed to get volume replication info")
 			// Set UNKNOWN Replicating condition if any error occurred while fetching volume info.
 			setReplicationCondition(vr.instance, vr.instance.Spec.DataSource.Kind, err.Error(), proto.GetVolumeReplicationInfoResponse_UNKNOWN)
-			statusErr := r.updateReplicationStatus(instance, logger, GetReplicationState(instance.Spec.ReplicationState), msg)
-			if statusErr != nil {
-				return ctrl.Result{}, statusErr
-			}
+			_ = r.updateReplicationStatus(instance, logger, GetReplicationState(instance.Spec.ReplicationState), msg)
 			return ctrl.Result{}, err
 		}
 	}

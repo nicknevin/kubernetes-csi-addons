@@ -67,8 +67,10 @@ type VolumeReplicationReconciler struct {
 	// ConnectionPool consists of map of Connection objects
 	Connpool *conn.ConnectionPool
 	// Timeout for the Reconcile operation.
-	Timeout     time.Duration
-	Replication grpcClient.VolumeReplication
+	Timeout                               time.Duration
+	Replication                           grpcClient.VolumeReplication
+	GetReplicationClient                  GetReplicationClient
+	SupportsGetReplicationDestinationInfo SupportsGetReplicationDestinationInfo
 }
 
 //+kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumereplications,verbs=get;list;watch;update
@@ -186,7 +188,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		logger.Info("Replication handle", "ReplicationHandleName", replicationHandle)
 	}
 
-	replicationClient, destinationInfoSupported, err := getReplicationClient(ctx, r, vrcObj.Spec.Provisioner, instance.Spec.DataSource.Kind)
+	replicationClient, destinationInfoSupported, err := r.GetReplicationClient(ctx, r, vrcObj.Spec.Provisioner, instance.Spec.DataSource.Kind)
 	if err != nil {
 		logger.Error(err, "Failed to get ReplicationClient")
 

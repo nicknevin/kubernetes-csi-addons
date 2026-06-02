@@ -86,6 +86,10 @@ var mockVGRPersistentVolumeClaim = &corev1.PersistentVolumeClaim{
 	},
 }
 
+func supportsGetReplicationDestinationInfo(ctx context.Context, r connPoolReconciler, driverName string) (bool, error) {
+	return false, nil
+}
+
 func createFakeVolumeGroupReplicationReconciler(t *testing.T, obj ...runtime.Object) VolumeGroupReplicationReconciler {
 	t.Helper()
 	scheme := createFakeScheme(t)
@@ -96,11 +100,12 @@ func createFakeVolumeGroupReplicationReconciler(t *testing.T, obj ...runtime.Obj
 	reconcilerCtx := context.TODO()
 
 	return VolumeGroupReplicationReconciler{
-		Client:           client,
-		Scheme:           scheme,
-		log:              logger,
-		ctx:              reconcilerCtx,
-		MaxGroupPVCCount: 100,
+		Client:                                client,
+		Scheme:                                scheme,
+		log:                                   logger,
+		ctx:                                   reconcilerCtx,
+		MaxGroupPVCCount:                      100,
+		SupportsGetReplicationDestinationInfo: supportsGetReplicationDestinationInfo,
 	}
 }
 

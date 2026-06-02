@@ -71,7 +71,8 @@ type VolumeGroupReplicationReconciler struct {
 	// ConnectionPool consists of map of Connection objects
 	Connpool *conn.ConnectionPool
 	// Timeout for the Reconcile operation.
-	Timeout time.Duration
+	Timeout                               time.Duration
+	SupportsGetReplicationDestinationInfo SupportsGetReplicationDestinationInfo
 }
 
 type PersistentVolumeInfo struct {

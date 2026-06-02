@@ -272,31 +272,36 @@ func main() {
 		}
 	}
 	if err = (&replicationController.VolumeReplicationReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Connpool: connPool,
-		Timeout:  defaultTimeout,
+		Client:                                mgr.GetClient(),
+		Scheme:                                mgr.GetScheme(),
+		Connpool:                              connPool,
+		Timeout:                               defaultTimeout,
+		GetReplicationClient:                  replicationController.NewReplicationClient,
+		SupportsGetReplicationDestinationInfo: replicationController.IsReplicationDestinationInfoSupported,
 	}).SetupWithManager(mgr, ctrlOptions); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeReplication")
 		os.Exit(1)
 	}
 
 	if err = (&replicationController.VolumeGroupReplicationReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Recorder:         mgr.GetEventRecorder("volumegroupreplication-controller"),
-		MaxGroupPVCCount: cfg.MaxGroupPVC,
-		Connpool:         connPool,
-		Timeout:          defaultTimeout,
+		Client:                                mgr.GetClient(),
+		Scheme:                                mgr.GetScheme(),
+		Recorder:                              mgr.GetEventRecorder("volumegroupreplication-controller"),
+		MaxGroupPVCCount:                      cfg.MaxGroupPVC,
+		Connpool:                              connPool,
+		Timeout:                               defaultTimeout,
+		SupportsGetReplicationDestinationInfo: replicationController.IsReplicationDestinationInfoSupported,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeGroupReplication")
 		os.Exit(1)
 	}
 	if err = (&replicationController.VolumeGroupReplicationContentReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Connpool: connPool,
-		Timeout:  defaultTimeout,
+		Client:                                mgr.GetClient(),
+		Scheme:                                mgr.GetScheme(),
+		Connpool:                              connPool,
+		Timeout:                               defaultTimeout,
+		GetReplicationClient:                  replicationController.NewReplicationClient,
+		SupportsGetReplicationDestinationInfo: replicationController.IsReplicationDestinationInfoSupported,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeGroupReplicationContent")
 		os.Exit(1)

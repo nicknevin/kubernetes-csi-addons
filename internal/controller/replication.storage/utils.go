@@ -33,6 +33,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type GetReplicationClient func(ctx context.Context, r connPoolReconciler, driverName, dataSource string) (grpcClient.VolumeReplication, bool, error)
+
+type SupportsGetReplicationDestinationInfo func(ctx context.Context, r connPoolReconciler, driverName string) (bool, error)
+
 func GetReplicationState(instanceState replicationv1alpha1.ReplicationState) replicationv1alpha1.State {
 	switch instanceState {
 	case replicationv1alpha1.Primary:
@@ -118,7 +122,26 @@ func (r *VolumeGroupReplicationContentReconciler) getTimeout() time.Duration {
 	return r.Timeout
 }
 
-func getReplicationClient(ctx context.Context, r connPoolReconciler, driverName, dataSource string) (grpcClient.VolumeReplication, bool, error) {
+func IsReplicationDestinationInfoSupported(ctx context.Context, r connPoolReconciler, driverName string) (bool, error) {
+	conn, err := r.getConnPool().GetLeaderByDriver(ctx, r.getClient(), driverName)
+	if err != nil {
+		return false, err
+	}
+
+	for _, cap := range conn.Capabilities {
+		if cap.GetVolumeReplication() == nil {
+			continue
+		}
+
+		if cap.GetVolumeReplication().GetType() == identity.Capability_VolumeReplication_GET_REPLICATION_DESTINATION_INFO {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func NewReplicationClient(ctx context.Context, r connPoolReconciler, driverName, dataSource string) (grpcClient.VolumeReplication, bool, error) {
 	conn, err := r.getConnPool().GetLeaderByDriver(ctx, r.getClient(), driverName)
 	if err != nil {
 		return nil, false, fmt.Errorf("no leader for the ControllerService of driver %q: %w", driverName, err)

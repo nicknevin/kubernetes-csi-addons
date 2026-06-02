@@ -48,7 +48,9 @@ type VolumeGroupReplicationContentReconciler struct {
 	// ConnectionPool consists of map of Connection objects
 	Connpool *conn.ConnectionPool
 	// Timeout for the Reconcile operation.
-	Timeout time.Duration
+	Timeout                               time.Duration
+	GetReplicationClient                  GetReplicationClient
+	SupportsGetReplicationDestinationInfo SupportsGetReplicationDestinationInfo
 }
 
 //+kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumegroupreplicationcontents,verbs=get;list;watch;create;update;patch;delete
@@ -239,11 +241,12 @@ func (r *VolumeGroupReplicationContentReconciler) Reconcile(ctx context.Context,
 	instance.Status.PersistentVolumeMappingList = pvMappings
 
 	// Fetch destination info if the driver supports it
-	repClient, destinationInfoSupported, err := getReplicationClient(ctx, r, instance.Spec.Provisioner, volumeGroupReplicationDataSource)
+	repClient, destinationInfoSupported, err := r.GetReplicationClient(ctx, r, instance.Spec.Provisioner, volumeGroupReplicationDataSource)
 	if err != nil {
 		logger.Error(err, "failed to get replication client")
 		return reconcile.Result{}, err
 	}
+
 	if destinationInfoSupported {
 		resp, err := repClient.GetReplicationDestinationInfo(groupID, secretName, secretNamespace)
 		if err != nil {

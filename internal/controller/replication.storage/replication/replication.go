@@ -192,6 +192,19 @@ func (r *Response) HasKnownGRPCError(knownErrors []codes.Code) bool {
 	return false
 }
 
+func IsAbortedError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	s, ok := status.FromError(err)
+	if !ok {
+		return false // not a gRPC error
+	}
+
+	return s.Code() == codes.Aborted
+}
+
 // GetMessageFromError returns the message from the error.
 func GetMessageFromError(err error) string {
 	s, ok := status.FromError(err)

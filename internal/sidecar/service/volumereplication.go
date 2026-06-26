@@ -272,6 +272,7 @@ func (rs *ReplicationServer) GetReplicationDestinationInfo(
 	ctx context.Context,
 	req *proto.GetReplicationDestinationInfoRequest) (*proto.GetReplicationDestinationInfoResponse, error) {
 	logger := log.FromContext(ctx)
+	logger.Info(fmt.Sprintf("GetReplicationDestinationInfo request: %#v", req), "replicationSource", req.GetReplicationSource())
 	// Get the secrets from the k8s cluster
 	data, err := kube.GetSecret(ctx, rs.kubeClient, req.GetSecretName(), req.GetSecretNamespace())
 	if err != nil {

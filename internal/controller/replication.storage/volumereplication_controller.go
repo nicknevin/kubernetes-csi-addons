@@ -261,7 +261,9 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				err = r.disableVolumeReplication(vr)
 				if err != nil {
 					logger.Error(err, "failed to disable replication")
-					return ctrl.Result{}, err
+					if !replication.IsAbortedError(err) {
+						return ctrl.Result{}, err
+					}
 				}
 			}
 			switch instance.Spec.DataSource.Kind {

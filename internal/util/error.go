@@ -17,6 +17,9 @@ limitations under the License.
 package util
 
 import (
+	"fmt"
+	"runtime"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -50,4 +53,13 @@ func IsOutOfRangeError(err error) bool {
 	}
 
 	return s.Code() == codes.OutOfRange
+}
+
+// skip = 0 means the caller of this function, skip = 1 means the caller of the caller, and so on
+func CallerInfo(skip int) string {
+	_, file, line, ok := runtime.Caller(skip + 1)
+	if !ok {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s:%d", file, line)
 }

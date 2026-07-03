@@ -134,6 +134,8 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		return reconcile.Result{}, nil
 	}
 
+	r.log.Info("Reconciling VolumeGroupReplication resource", "VGR", instance)
+
 	// Get VolumeGroupReplicationClass instance
 	vgrClassObj, err := r.getVolumeGroupReplicationClass(instance.Spec.VolumeGroupReplicationClassName)
 	if err != nil {
@@ -745,6 +747,7 @@ func (r *VolumeGroupReplicationReconciler) cleanupGroupPVC(vgr *replicationv1alp
 
 func (r *VolumeGroupReplicationReconciler) createOrUpdateVolumeGroupReplicationContentCR(vgr *replicationv1alpha1.VolumeGroupReplication,
 	vgrContentObj *replicationv1alpha1.VolumeGroupReplicationContent, driver string, pvHandlesList []string) error {
+	r.log.Info("Creating/Updating VolumeGroupReplicationContent resource", "VGRContentName", vgrContentObj.Name, "pvHandlesList", pvHandlesList)
 	vgrRef := fmt.Sprintf("%s/%s", vgr.Namespace, vgr.Name)
 	_, err := controllerutil.CreateOrUpdate(r.ctx, r.Client, vgrContentObj, func() error {
 		if vgr.Spec.VolumeGroupReplicationContentName != "" && vgrContentObj.CreationTimestamp.IsZero() {

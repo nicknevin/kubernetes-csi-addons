@@ -266,6 +266,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					if !replication.IsAbortedError(err) {
 						return ctrl.Result{}, err
 					}
+					logger.Info("ignoring disable replication Aborted error")
 				}
 			}
 			switch instance.Spec.DataSource.Kind {
@@ -566,6 +567,7 @@ func (r *VolumeReplicationReconciler) updateReplicationStatus(
 	logger logr.Logger,
 	state replicationv1alpha1.State,
 	message string) error {
+	logger.Info("updating VR status", "State", state, "Message", message, "ObservedGeneration", instance.Generation, "caller", util.CallerInfo(1))
 	instance.Status.State = state
 	instance.Status.Message = message
 	instance.Status.ObservedGeneration = instance.Generation
@@ -686,6 +688,7 @@ func (r *VolumeReplicationReconciler) resyncVolume(vr *volumeReplicationInstance
 
 	if resp.Error != nil {
 		if util.IsOutOfRangeError(resp.Error) {
+			vr.logger.Info("ignoring resync volume OutOfRange error")
 			return false, nil
 		}
 		vr.logger.Error(resp.Error, "failed to resync volume")

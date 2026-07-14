@@ -286,7 +286,7 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	if destinationInfoSupported {
-		r.updateReplicationDestinationCondition(instance, pvInfoMap, vgrContentObj.Status.PersistentVolumeMappingList)
+		r.ensureReplicationDestinationInfoCondition(instance)
 	}
 
 	// Update PersistentVolumeClaimsRefList in VGR Status
@@ -351,6 +351,10 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	instance.Status.ObservedGeneration = instance.Generation
 	for i := range instance.Status.Conditions {
 		instance.Status.Conditions[i].ObservedGeneration = instance.Generation
+	}
+
+	if destinationInfoSupported {
+		r.updateReplicationDestinationCondition(instance, pvInfoMap, vgrContentObj.Status.PersistentVolumeMappingList)
 	}
 
 	err = r.Status().Update(ctx, instance)
@@ -858,6 +862,12 @@ func (r *VolumeGroupReplicationReconciler) cleanupVR(vgr *replicationv1alpha1.Vo
 	}
 
 	return err
+}
+
+func (r *VolumeGroupReplicationReconciler) ensureReplicationDestinationInfoCondition(vgr *replicationv1alpha1.VolumeGroupReplication) {
+	if findCondition(vgr.Status.Conditions, replicationv1alpha1.ConditionDestinationInfoAvailable) == nil {
+		setDestinationInfoPendingCondition(&vgr.Status.Conditions, vgr.Generation, volumeGroupReplicationDataSource)
+	}
 }
 
 func (r *VolumeGroupReplicationReconciler) updateReplicationDestinationCondition(vgr *replicationv1alpha1.VolumeGroupReplication,

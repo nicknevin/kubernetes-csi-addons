@@ -179,127 +179,7 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 		},
 	}
 
-	// Create/Update dependent resources only if the instance is not marked for deletion
-	if instance.GetDeletionTimestamp().IsZero() {
-		// Add finalizer to VGR instance
-		if err = addFinalizerToVGR(r.Client, r.log, instance); err != nil {
-			r.log.Error(err, "failed to add VolumeGroupReplication finalizer")
-			return reconcile.Result{}, err
-		}
-
-		// Check if PVCs exist based on provided selectors
-		pvcList, labelSelector, err := r.getMatchingPVCsFromSource(instance)
-		if err != nil {
-			r.log.Error(err, "failed to get PVCs using selector")
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-		if len(pvcList) > r.MaxGroupPVCCount {
-			err = fmt.Errorf("more than %d PVCs match the given selector", r.MaxGroupPVCCount)
-			r.log.Error(err, "only %d PVCs are allowed for volume group replication", r.MaxGroupPVCCount)
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-
-		// Add the string representation of the labelSelector to the VGR annotation
-		if instance.Annotations == nil {
-			instance.Annotations = make(map[string]string)
-		}
-
-		// We need to save the label selector in the annotation, so that an event in PVC
-		// triggers the reconcile particularly for the VGR that the PVC is part of by comparing
-		// the labels on the pvc with the pvcSelector annotation in VGR
-		if instance.Annotations[pvcSelector] != labelSelector {
-			instance.Annotations[pvcSelector] = labelSelector
-			err = r.Update(ctx, instance)
-			if err != nil {
-				r.log.Error(err, "failed to add pvc selector annotation to VGR")
-				_ = r.setGroupReplicationFailure(instance, err)
-				return reconcile.Result{}, err
-			}
-		}
-
-		// Update annotation,finalizers for old,new PVCs
-		pvcRefList, err := r.updateFinalizerAndAnnotationOnPVCs(instance, pvcList)
-		if err != nil {
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-
-		pvInfoMap, err := r.getPVInfoForPVCs(vgrClassObj, pvcList)
-		if err != nil {
-			r.log.Error(err, "failed to get PVs for PVCs")
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-
-		destinationInfoSupported, err := r.supportsGetReplicationDestinationInfo(vgrClassObj.Spec.Provisioner)
-		if err != nil {
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-
-		if destinationInfoSupported {
-			r.updateReplicationDestinationCondition(instance, pvInfoMap, vgrContentObj.Status.PersistentVolumeMappingList)
-		}
-
-		// Update PersistentVolumeClaimsRefList in VGR Status
-		if !reflect.DeepEqual(instance.Status.PersistentVolumeClaimsRefList, pvcRefList) {
-			instance.Status.PersistentVolumeClaimsRefList = pvcRefList
-			err = r.Status().Update(ctx, instance)
-			if err != nil {
-				r.log.Error(err, "failed to update VolumeGroupReplication resource")
-				_ = r.setGroupReplicationFailure(instance, err)
-				return reconcile.Result{}, err
-			}
-		}
-
-		// Create/Update VolumeGroupReplicationContent CR
-		pvHandlesList := getPVHandles(pvInfoMap)
-		err = r.createOrUpdateVolumeGroupReplicationContentCR(instance, vgrContentObj, vgrClassObj.Spec.Provisioner, pvHandlesList)
-		if err != nil {
-			r.log.Error(err, "failed to create/update volumeGroupReplicationContent resource", "VGRContentName", vgrContentObj.Name)
-			_ = r.setGroupReplicationFailure(instance, err)
-			return reconcile.Result{}, err
-		}
-
-		// Update the VGR with VGRContentName, if empty
-		if instance.Spec.VolumeGroupReplicationContentName == "" {
-			instance.Spec.VolumeGroupReplicationContentName = vgrContentObj.Name
-			err = r.Update(ctx, instance)
-			if err != nil {
-				r.log.Error(err, "failed to update volumeGroupReplication instance", "VGRName", instance.Name)
-				_ = r.setGroupReplicationFailure(instance, err)
-				return reconcile.Result{}, err
-			}
-		}
-
-		// Since, the grouping may take few seconds to happen, just exit and wait for the reconcile
-		// to be triggered when the group handle is updated in the vgrcontent resource.
-		if vgrContentObj.Spec.VolumeGroupReplicationHandle == "" {
-			r.log.Info("Either volumegroupreplicationcontent is not yet created or it is still grouping the volumes to be replicated")
-			return reconcile.Result{}, nil
-		} else {
-			// Create/Update VolumeReplication CR
-			err = r.createOrUpdateVolumeReplicationCR(instance, vrObj)
-			if err != nil {
-				r.log.Error(err, "failed to create/update volumeReplication resource", "VRName", vrObj.Name)
-				_ = r.setGroupReplicationFailure(instance, err)
-				return reconcile.Result{}, err
-			}
-
-			// Update the VGR with VolumeReplication resource name, if not present
-			if instance.Spec.VolumeReplicationName == "" {
-				instance.Spec.VolumeReplicationName = vrObj.Name
-				err = r.Update(ctx, instance)
-				if err != nil {
-					r.log.Error(err, "failed to update volumeGroupReplication instance", "VGRName", instance.Name)
-					_ = r.setGroupReplicationFailure(instance, err)
-					return reconcile.Result{}, err
-				}
-			}
-		}
-	} else {
+	if !instance.GetDeletionTimestamp().IsZero() {
 		// When the VGR resource is being deleted
 		// If dependent VR was created, delete it
 		if instance.Spec.VolumeReplicationName != "" {
@@ -344,6 +224,126 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 
 		r.log.Info("volumeGroupReplication object is terminated, skipping reconciliation")
 		return reconcile.Result{}, nil
+	}
+
+	// Create/Update dependent resources
+	// Add finalizer to VGR instance
+	if err = addFinalizerToVGR(r.Client, r.log, instance); err != nil {
+		r.log.Error(err, "failed to add VolumeGroupReplication finalizer")
+		return reconcile.Result{}, err
+	}
+
+	// Check if PVCs exist based on provided selectors
+	pvcList, labelSelector, err := r.getMatchingPVCsFromSource(instance)
+	if err != nil {
+		r.log.Error(err, "failed to get PVCs using selector")
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+	if len(pvcList) > r.MaxGroupPVCCount {
+		err = fmt.Errorf("more than %d PVCs match the given selector", r.MaxGroupPVCCount)
+		r.log.Error(err, "only %d PVCs are allowed for volume group replication", r.MaxGroupPVCCount)
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+
+	// Add the string representation of the labelSelector to the VGR annotation
+	if instance.Annotations == nil {
+		instance.Annotations = make(map[string]string)
+	}
+
+	// We need to save the label selector in the annotation, so that an event in PVC
+	// triggers the reconcile particularly for the VGR that the PVC is part of by comparing
+	// the labels on the pvc with the pvcSelector annotation in VGR
+	if instance.Annotations[pvcSelector] != labelSelector {
+		instance.Annotations[pvcSelector] = labelSelector
+		err = r.Update(ctx, instance)
+		if err != nil {
+			r.log.Error(err, "failed to add pvc selector annotation to VGR")
+			_ = r.setGroupReplicationFailure(instance, err)
+			return reconcile.Result{}, err
+		}
+	}
+
+	// Update annotation,finalizers for old,new PVCs
+	pvcRefList, err := r.updateFinalizerAndAnnotationOnPVCs(instance, pvcList)
+	if err != nil {
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+
+	pvInfoMap, err := r.getPVInfoForPVCs(vgrClassObj, pvcList)
+	if err != nil {
+		r.log.Error(err, "failed to get PVs for PVCs")
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+
+	destinationInfoSupported, err := r.supportsGetReplicationDestinationInfo(vgrClassObj.Spec.Provisioner)
+	if err != nil {
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+
+	if destinationInfoSupported {
+		r.updateReplicationDestinationCondition(instance, pvInfoMap, vgrContentObj.Status.PersistentVolumeMappingList)
+	}
+
+	// Update PersistentVolumeClaimsRefList in VGR Status
+	if !reflect.DeepEqual(instance.Status.PersistentVolumeClaimsRefList, pvcRefList) {
+		instance.Status.PersistentVolumeClaimsRefList = pvcRefList
+		err = r.Status().Update(ctx, instance)
+		if err != nil {
+			r.log.Error(err, "failed to update VolumeGroupReplication resource")
+			_ = r.setGroupReplicationFailure(instance, err)
+			return reconcile.Result{}, err
+		}
+	}
+
+	// Create/Update VolumeGroupReplicationContent CR
+	pvHandlesList := getPVHandles(pvInfoMap)
+	err = r.createOrUpdateVolumeGroupReplicationContentCR(instance, vgrContentObj, vgrClassObj.Spec.Provisioner, pvHandlesList)
+	if err != nil {
+		r.log.Error(err, "failed to create/update volumeGroupReplicationContent resource", "VGRContentName", vgrContentObj.Name)
+		_ = r.setGroupReplicationFailure(instance, err)
+		return reconcile.Result{}, err
+	}
+
+	// Update the VGR with VGRContentName, if empty
+	if instance.Spec.VolumeGroupReplicationContentName == "" {
+		instance.Spec.VolumeGroupReplicationContentName = vgrContentObj.Name
+		err = r.Update(ctx, instance)
+		if err != nil {
+			r.log.Error(err, "failed to update volumeGroupReplication instance", "VGRName", instance.Name)
+			_ = r.setGroupReplicationFailure(instance, err)
+			return reconcile.Result{}, err
+		}
+	}
+
+	// Since, the grouping may take few seconds to happen, just exit and wait for the reconcile
+	// to be triggered when the group handle is updated in the vgrcontent resource.
+	if vgrContentObj.Spec.VolumeGroupReplicationHandle == "" {
+		r.log.Info("Either volumegroupreplicationcontent is not yet created or it is still grouping the volumes to be replicated")
+		return reconcile.Result{}, nil
+	} else {
+		// Create/Update VolumeReplication CR
+		err = r.createOrUpdateVolumeReplicationCR(instance, vrObj)
+		if err != nil {
+			r.log.Error(err, "failed to create/update volumeReplication resource", "VRName", vrObj.Name)
+			_ = r.setGroupReplicationFailure(instance, err)
+			return reconcile.Result{}, err
+		}
+
+		// Update the VGR with VolumeReplication resource name, if not present
+		if instance.Spec.VolumeReplicationName == "" {
+			instance.Spec.VolumeReplicationName = vrObj.Name
+			err = r.Update(ctx, instance)
+			if err != nil {
+				r.log.Error(err, "failed to update volumeGroupReplication instance", "VGRName", instance.Name)
+				_ = r.setGroupReplicationFailure(instance, err)
+				return reconcile.Result{}, err
+			}
+		}
 	}
 
 	// Update VGR status based on VR Status

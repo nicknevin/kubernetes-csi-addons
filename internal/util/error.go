@@ -41,3 +41,13 @@ func IsUnimplementedError(err error) bool {
 
 	return s.Code() == codes.Unimplemented
 }
+
+// IsOutOfRangeError returns true if the error is OutOfRange error.
+func IsOutOfRangeError(err error) bool {
+	s, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+
+	return s.Code() == codes.OutOfRange
+}

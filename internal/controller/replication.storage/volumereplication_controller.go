@@ -346,7 +346,12 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 				return reconcile.Result{}, err
 			}
+
 			replicationErr = r.markVolumeAsPrimary(vr)
+			if replicationErr == nil {
+				vr.force = vr.instance.Spec.AutoResync
+				requeueForResync, replicationErr = r.resyncVolume(vr)
+			}
 		}
 
 		// Set PromotedCondition on VR/VGR, if the promotion was a success, or it was already a primary and the
@@ -676,6 +681,9 @@ func (r *VolumeReplicationReconciler) resyncVolume(vr *volumeReplicationInstance
 	resp := volumeReplication.Resync()
 
 	if resp.Error != nil {
+		if util.IsOutOfRangeError(resp.Error) {
+			return false, nil
+		}
 		vr.logger.Error(resp.Error, "failed to resync volume")
 		setFailedResyncCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind, "failed to resync volume", resp.Error.Error())
 

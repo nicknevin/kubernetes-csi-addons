@@ -55,3 +55,13 @@ func IsAbortedError(err error) bool {
 
 	return s.Code() == codes.Aborted
 }
+
+// IsOutOfRangeError returns true if the error is a gRPC OutOfRange error.
+func IsOutOfRangeError(err error) bool {
+	s, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+
+	return s.Code() == codes.OutOfRange
+}

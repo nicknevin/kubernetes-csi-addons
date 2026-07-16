@@ -54,6 +54,12 @@ func GetCurrentReplicationState(instanceStatusState replicationv1alpha1.State) r
 	return instanceStatusState
 }
 
+// isResyncOnPrimaryEnabled returns true if the VolumeReplication instance has
+// the ResyncOnPrimaryAnnotation set to "true".
+func isResyncOnPrimaryEnabled(instance *replicationv1alpha1.VolumeReplication) bool {
+	return instance.GetAnnotations()[replicationv1alpha1.ResyncOnPrimaryAnnotation] == "true"
+}
+
 func WaitForVolumeReplicationResource(client client.Client, logger logr.Logger, resourceName string) error {
 	unstructuredResource := &unstructured.UnstructuredList{}
 	unstructuredResource.SetGroupVersionKind(schema.GroupVersionKind{

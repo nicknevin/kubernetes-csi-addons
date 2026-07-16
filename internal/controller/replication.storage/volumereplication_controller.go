@@ -346,6 +346,7 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 				return reconcile.Result{}, err
 			}
+
 			replicationErr = r.markVolumeAsPrimary(vr)
 		}
 
@@ -353,6 +354,10 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// status was updated due to some intermittent bug
 		if replicationErr == nil {
 			setPromotedCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind)
+
+			if isResyncOnPrimaryEnabled(instance) {
+				requeueForResync, replicationErr = r.resyncPrimaryVolume(vr)
+			}
 		}
 
 	case replicationv1alpha1.Secondary:
@@ -690,6 +695,38 @@ func (r *VolumeReplicationReconciler) resyncVolume(vr *volumeReplicationInstance
 
 	// No longer degraded, as volume is fully synced
 	setNotDegradedCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind)
+
+	return false, nil
+}
+
+func (r *VolumeReplicationReconciler) resyncPrimaryVolume(vr *volumeReplicationInstance) (bool, error) {
+	volumeReplication := replication.Replication{
+		Params: vr.commonRequestParameters,
+		Force:  true,
+	}
+
+	resp := volumeReplication.Resync()
+
+	if resp.Error != nil {
+		vr.logger.Error(resp.Error, "failed to resync volume")
+		setFailedResyncPrimaryCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind, "failed to resync volume", resp.Error.Error())
+
+		return false, resp.Error
+	}
+	resyncResponse, ok := resp.Response.(*proto.ResyncVolumeResponse)
+	if !ok {
+		err := fmt.Errorf("received response of unexpected type")
+		vr.logger.Error(err, "unable to parse response")
+		setFailedResyncPrimaryCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind, "unable to parse resync response", "received response of unexpected type")
+
+		return false, err
+	}
+
+	setResyncPrimaryCondition(&vr.instance.Status.Conditions, vr.instance.Generation, vr.instance.Spec.DataSource.Kind)
+
+	if !resyncResponse.GetReady() {
+		return true, nil
+	}
 
 	return false, nil
 }

@@ -60,6 +60,13 @@ func setPromotedCondition(conditions *[]metav1.Condition, observedGeneration int
 		ObservedGeneration: observedGeneration,
 		Status:             metav1.ConditionFalse,
 	})
+	setStatusCondition(conditions, &metav1.Condition{
+		Message:            fmt.Sprintf("%s %s", source, v1alpha1.MessageValidated),
+		Type:               v1alpha1.ConditionValidated,
+		Reason:             v1alpha1.PrerequisiteMet,
+		ObservedGeneration: observedGeneration,
+		Status:             metav1.ConditionTrue,
+	})
 }
 
 // sets conditions when volume promotion was failed.
@@ -244,6 +251,30 @@ func setFailedResyncCondition(conditions *[]metav1.Condition, observedGeneration
 	})
 	setStatusCondition(conditions, &metav1.Condition{
 		Message:            fmt.Sprintf("%s %s", source, v1alpha1.MessageNotResyncing),
+		Type:               v1alpha1.ConditionResyncing,
+		Reason:             v1alpha1.FailedToResync,
+		ObservedGeneration: observedGeneration,
+		Status:             metav1.ConditionFalse,
+	})
+}
+
+// sets conditions when volume resync on the primary was triggered successfully.
+func setResyncPrimaryCondition(conditions *[]metav1.Condition, observedGeneration int64, dataSource string) {
+	source := getSource(dataSource)
+	setStatusCondition(conditions, &metav1.Condition{
+		Message:            fmt.Sprintf("%s %s", source, v1alpha1.MessageResyncTriggered),
+		Type:               v1alpha1.ConditionResyncing,
+		Reason:             v1alpha1.ResyncTriggered,
+		ObservedGeneration: observedGeneration,
+		Status:             metav1.ConditionTrue,
+	})
+}
+
+// sets conditions when volume resync on the primary failed.
+func setFailedResyncPrimaryCondition(conditions *[]metav1.Condition, observedGeneration int64, dataSource, statusMessage, errorMessage string) {
+	source := getSource(dataSource)
+	setStatusCondition(conditions, &metav1.Condition{
+		Message:            fmt.Sprintf("%s %s, %s: %s", source, v1alpha1.MessageNotResyncing, statusMessage, errorMessage),
 		Type:               v1alpha1.ConditionResyncing,
 		Reason:             v1alpha1.FailedToResync,
 		ObservedGeneration: observedGeneration,

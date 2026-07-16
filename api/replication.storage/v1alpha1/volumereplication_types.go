@@ -23,6 +23,10 @@ import (
 
 const (
 	VolumeReplicationNameAnnotation = "replication.storage.openshift.io/volume-replication-name"
+
+	// ResyncOnPrimaryAnnotation, when set to "true" on a VolumeReplication,
+	// requests that a resync be issued while the volume is primary.
+	ResyncOnPrimaryAnnotation = "replication.storage.openshift.io/resync-on-primary"
 )
 
 // These are valid condition statuses.

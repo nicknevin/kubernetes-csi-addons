@@ -37,6 +37,7 @@ spec:
             - --leader-elect
             - --automaxprocs
           image: controller:latest
+          imagePullPolicy: Always
           name: manager
           ports:
             - name: metrics

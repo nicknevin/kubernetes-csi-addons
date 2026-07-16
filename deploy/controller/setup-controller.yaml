@@ -60,6 +60,7 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         image: quay.io/nnevin/csi-addons/k8s-controller:canary
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz

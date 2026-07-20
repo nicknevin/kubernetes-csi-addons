@@ -32,4 +32,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/nnevin/csi-addons/k8s-controller
-  newTag: canary
+  newTag: v0.14.10

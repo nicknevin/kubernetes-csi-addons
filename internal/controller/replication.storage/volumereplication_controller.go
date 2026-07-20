@@ -88,7 +88,7 @@ type VolumeReplicationReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx, "Request.Name", req.Name, "Request.Namespace", req.Namespace)
+	logger := log.FromContext(ctx)
 
 	// Fetch VolumeReplication instance
 	instance := &replicationv1alpha1.VolumeReplication{}

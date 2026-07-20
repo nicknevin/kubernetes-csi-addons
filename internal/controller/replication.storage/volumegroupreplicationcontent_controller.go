@@ -74,7 +74,7 @@ Steps performed by the reconcile loop:
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *VolumeGroupReplicationContentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx, "Request.Name", req.Name, "Request.Namespace", req.Namespace)
+	logger := log.FromContext(ctx)
 
 	// Fetch VolumeGroupReplicationContent instance
 	instance := &replicationv1alpha1.VolumeGroupReplicationContent{}

@@ -114,7 +114,7 @@ In case of deletion:
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.log = log.FromContext(ctx, "Request.Name", req.Name, "Request.Namespace", req.Namespace)
+	r.log = log.FromContext(ctx)
 	r.ctx = log.IntoContext(ctx, r.log)
 
 	// Fetch VolumeGroupReplication instance

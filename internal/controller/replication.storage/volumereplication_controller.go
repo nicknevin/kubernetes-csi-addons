@@ -69,6 +69,8 @@ type VolumeReplicationReconciler struct {
 	// Timeout for the Reconcile operation.
 	Timeout     time.Duration
 	Replication grpcClient.VolumeReplication
+	Namespace   string
+	errorInject map[string]string
 }
 
 //+kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumereplications,verbs=get;list;watch;update
@@ -81,6 +83,7 @@ type VolumeReplicationReconciler struct {
 //+kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumegroupreplicationcontents/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -107,6 +110,14 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	logger.Info(fmt.Sprintf("reconciling VolumeReplication instance %#v", instance))
+
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: "csi-addons-error-inject"}, cm); err != nil {
+		r.errorInject = make(map[string]string)
+	} else {
+		logger.Info("Read csi-addons-error-inject ConfigMap")
+		r.errorInject = cm.Data
+	}
 
 	// Get VolumeReplicationClass
 	vrcObj, err := r.getVolumeReplicationClass(logger, instance.Spec.VolumeReplicationClass)
@@ -817,6 +828,11 @@ func (r *VolumeReplicationReconciler) fetchDestinationInfoAndUpdateCondition(vr 
 		Params: vr.commonRequestParameters,
 	}
 	destResp := destReplication.GetDestinationInfo()
+	if destResp.Error == nil && r.errorInject["FailGetDestinationInfo"] == "true" {
+		destResp = &replication.Response{
+			Error: fmt.Errorf("injected error for GetDestinationInfo"),
+		}
+	}
 	if destResp.Error != nil {
 		vr.logger.Error(destResp.Error, "failed to get replication destination info, will retry")
 		setDestinationInfoFailedCondition(&instance.Status.Conditions,

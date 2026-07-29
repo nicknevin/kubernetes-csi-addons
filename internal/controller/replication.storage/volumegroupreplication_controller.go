@@ -71,7 +71,9 @@ type VolumeGroupReplicationReconciler struct {
 	// ConnectionPool consists of map of Connection objects
 	Connpool *conn.ConnectionPool
 	// Timeout for the Reconcile operation.
-	Timeout time.Duration
+	Timeout     time.Duration
+	Namespace   string
+	errorInject map[string]string
 }
 
 type PersistentVolumeInfo struct {
@@ -92,6 +94,7 @@ type PersistentVolumeInfoMap map[string]PersistentVolumeInfo
 //+kubebuilder:rbac:groups=replication.storage.openshift.io,resources=volumereplications/status,verbs=get;list
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims;persistentvolumes,verbs=get;list;watch;update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims/finalizers,verbs=update
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 
 /*
 Steps performed by the reconcile loop:
@@ -135,6 +138,14 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	r.log.Info("Reconciling VolumeGroupReplication resource", "VGR", instance)
+
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: "csi-addons-error-inject"}, cm); err != nil {
+		r.errorInject = make(map[string]string)
+	} else {
+		r.errorInject = cm.Data
+		r.log.Info("Read csi-addons-error-inject ConfigMap", "inject", r.errorInject)
+	}
 
 	// Get VolumeGroupReplicationClass instance
 	vgrClassObj, err := r.getVolumeGroupReplicationClass(instance.Spec.VolumeGroupReplicationClassName)
@@ -343,6 +354,9 @@ func (r *VolumeGroupReplicationReconciler) Reconcile(ctx context.Context, req ct
 	instance.Status.ObservedGeneration = instance.Generation
 
 	destinationInfoSupported, err := r.supportsGetReplicationDestinationInfo(vgrClassObj.Spec.Provisioner)
+	if err == nil && r.errorInject["FailSupportsGetReplicationDestinationInfo"] == "true" {
+		err = errors.New("injected error for supportsGetReplicationDestinationInfo")
+	}
 	if err != nil {
 		_ = r.setGroupReplicationFailure(instance, err)
 		return reconcile.Result{}, err

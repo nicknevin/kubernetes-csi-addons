@@ -276,10 +276,11 @@ func main() {
 		}
 	}
 	if err = (&replicationController.VolumeReplicationReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Connpool: connPool,
-		Timeout:  defaultTimeout,
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Connpool:  connPool,
+		Timeout:   defaultTimeout,
+		Namespace: cfg.Namespace,
 	}).SetupWithManager(mgr, ctrlOptions); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeReplication")
 		os.Exit(1)
@@ -292,6 +293,7 @@ func main() {
 		MaxGroupPVCCount: cfg.MaxGroupPVC,
 		Connpool:         connPool,
 		Timeout:          defaultTimeout,
+		Namespace:        cfg.Namespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VolumeGroupReplication")
 		os.Exit(1)

@@ -260,8 +260,11 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if vr.commonRequestParameters.VolumeID != "" || vr.commonRequestParameters.GroupID != "" {
 				err = r.disableVolumeReplication(vr)
 				if err != nil {
-					logger.Error(err, "failed to disable replication")
-					return ctrl.Result{}, err
+					if !util.IsOutOfRangeError(err) {
+						logger.Error(err, "failed to disable replication")
+						return ctrl.Result{}, err
+					}
+					logger.Info("ignoring disable replication error OutOfRange")
 				}
 			}
 			switch instance.Spec.DataSource.Kind {

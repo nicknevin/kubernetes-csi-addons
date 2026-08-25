@@ -1,12 +1,12 @@
 
 # Image URL to use all building/pushing image targets
-CONTROLLER_IMG ?= quay.io/csiaddons/k8s-controller
-SIDECAR_IMG ?= quay.io/csiaddons/k8s-sidecar
-BUNDLE_IMG ?= quay.io/csiaddons/k8s-bundle
-TOOLS_IMG ?= quay.io/csiaddons/tools
+CONTROLLER_IMG ?= quay.io/nnevin/csi-addons/k8s-controller
+SIDECAR_IMG ?= quay.io/nnevin/csi-addons/k8s-sidecar
+BUNDLE_IMG ?= quay.io/nnevin/csi-addons/k8s-bundle
+TOOLS_IMG ?= quay.io/nnevin/csi-addons/tools
 
 # set TAG to a release for consumption in the bundle
-TAG ?= latest
+TAG ?= v0.14.10
 
 # In case the *_IMG variables can contain a full qualified container-image
 # resource (includes a ":"), the container-images should not use the TAG

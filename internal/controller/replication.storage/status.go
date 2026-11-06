@@ -86,6 +86,35 @@ func setFailedPromotionCondition(conditions *[]metav1.Condition, observedGenerat
 		ObservedGeneration: observedGeneration,
 		Status:             metav1.ConditionFalse,
 	})
+	setValidatedCondition(conditions, observedGeneration, source)
+}
+
+// refreshValidatedCondition records that the prerequisites for the current
+// generation (the VolumeReplicationClass, its parameters and the data source)
+// have been met. Reconcile calls it once those checks pass, so Validated tracks
+// the current generation even when a later step in the reconcile fails.
+//
+// When enableReplication is about to run and the condition is already False,
+// it is left alone: enableReplication decides Validated itself (False on a
+// known precondition error, True otherwise), and setting True here first would
+// flip the condition, and its LastTransitionTime, on every retry.
+func refreshValidatedCondition(instance *v1alpha1.VolumeReplication) {
+	if enableReplicationPending(instance) {
+		if c := findCondition(instance.Status.Conditions, v1alpha1.ConditionValidated); c != nil && c.Status == metav1.ConditionFalse {
+			return
+		}
+	}
+	setValidatedCondition(&instance.Status.Conditions, instance.Generation, getSource(instance.Spec.DataSource.Kind))
+}
+
+// enableReplicationPending reports whether this reconcile will call
+// enableReplication, i.e. the VR is requested primary but not yet primary.
+func enableReplicationPending(instance *v1alpha1.VolumeReplication) bool {
+	return instance.Spec.ReplicationState == v1alpha1.Primary && instance.Status.State != v1alpha1.PrimaryState
+}
+
+// sets Validated=True/PrerequisiteMet.
+func setValidatedCondition(conditions *[]metav1.Condition, observedGeneration int64, source v1alpha1.Source) {
 	setStatusCondition(conditions, &metav1.Condition{
 		Message:            fmt.Sprintf("%s %s", source, v1alpha1.MessageValidated),
 		Type:               v1alpha1.ConditionValidated,

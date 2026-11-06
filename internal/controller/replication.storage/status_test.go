@@ -153,3 +153,75 @@ func TestDestinationInfoConditionTransitions(t *testing.T) {
 	assert.False(t, isDestinationInfoAvailable(conditions))
 	assert.Len(t, conditions, 1)
 }
+
+func TestRefreshValidatedCondition(t *testing.T) {
+	t.Parallel()
+
+	staleTrue := metav1.Condition{
+		Type: v1alpha1.ConditionValidated, Status: metav1.ConditionTrue,
+		Reason: v1alpha1.PrerequisiteMet, ObservedGeneration: 1,
+	}
+	staleFalse := metav1.Condition{
+		Type: v1alpha1.ConditionValidated, Status: metav1.ConditionFalse,
+		Reason: v1alpha1.PrerequisiteNotMet, ObservedGeneration: 1,
+	}
+
+	tests := []struct {
+		name       string
+		spec       v1alpha1.ReplicationState
+		state      v1alpha1.State
+		existing   []metav1.Condition
+		wantStatus metav1.ConditionStatus
+		wantReason string
+		wantGen    int64
+	}{
+		{
+			// dr2 log: gen 1 promoted, gen 2 resync failing on every retry.
+			name: "resync after primary refreshes stale True", spec: v1alpha1.Resync, state: v1alpha1.PrimaryState,
+			existing: []metav1.Condition{staleTrue}, wantStatus: metav1.ConditionTrue, wantReason: v1alpha1.PrerequisiteMet, wantGen: 5,
+		},
+		{
+			name: "secondary refreshes stale False", spec: v1alpha1.Secondary, state: v1alpha1.PrimaryState,
+			existing: []metav1.Condition{staleFalse}, wantStatus: metav1.ConditionTrue, wantReason: v1alpha1.PrerequisiteMet, wantGen: 5,
+		},
+		{
+			name: "already primary refreshes stale False", spec: v1alpha1.Primary, state: v1alpha1.PrimaryState,
+			existing: []metav1.Condition{staleFalse}, wantStatus: metav1.ConditionTrue, wantReason: v1alpha1.PrerequisiteMet, wantGen: 5,
+		},
+		{
+			name: "pending enable refreshes stale True", spec: v1alpha1.Primary, state: v1alpha1.SecondaryState,
+			existing: []metav1.Condition{staleTrue}, wantStatus: metav1.ConditionTrue, wantReason: v1alpha1.PrerequisiteMet, wantGen: 5,
+		},
+		{
+			name: "pending enable creates missing condition", spec: v1alpha1.Primary, state: "",
+			wantStatus: metav1.ConditionTrue, wantReason: v1alpha1.PrerequisiteMet, wantGen: 5,
+		},
+		{
+			// enableReplication will decide; don't flip False->True->False.
+			name: "pending enable leaves False alone", spec: v1alpha1.Primary, state: v1alpha1.SecondaryState,
+			existing: []metav1.Condition{staleFalse}, wantStatus: metav1.ConditionFalse, wantReason: v1alpha1.PrerequisiteNotMet, wantGen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			vr := &v1alpha1.VolumeReplication{}
+			vr.Generation = 5
+			vr.Spec.ReplicationState = tt.spec
+			vr.Spec.DataSource.Kind = pvcDataSource
+			vr.Status.State = tt.state
+			vr.Status.Conditions = append([]metav1.Condition{}, tt.existing...)
+
+			refreshValidatedCondition(vr)
+
+			c := findCondition(vr.Status.Conditions, v1alpha1.ConditionValidated)
+			if assert.NotNil(t, c) {
+				assert.Equal(t, tt.wantStatus, c.Status)
+				assert.Equal(t, tt.wantReason, c.Reason)
+				assert.Equal(t, tt.wantGen, c.ObservedGeneration)
+			}
+		})
+	}
+}

@@ -305,6 +305,11 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
+	// The VolumeReplicationClass, its parameters and the data source have all
+	// been validated for this generation; record that before any step below
+	// can fail and return early.
+	refreshValidatedCondition(instance)
+
 	instance.Status.LastStartTime = getCurrentTime()
 	if err = r.Status().Update(ctx, instance); err != nil {
 		logger.Error(err, "failed to update status")
@@ -346,6 +351,10 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 				return reconcile.Result{}, err
 			}
+			// enableReplication passed its precondition checks; this covers the
+			// case where refreshValidatedCondition left a previous False alone.
+			setValidatedCondition(&instance.Status.Conditions, instance.Generation, getSource(instance.Spec.DataSource.Kind))
+
 			replicationErr = r.markVolumeAsPrimary(vr)
 		}
 

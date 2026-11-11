@@ -368,3 +368,10 @@ func removeCondition(conditions *[]metav1.Condition, conditionType string) []met
 		return condition.Type == conditionType
 	})
 }
+
+func refreshValidatedConditionGeneration(instance *v1alpha1.VolumeReplication) {
+	validatedCondition := findCondition(instance.Status.Conditions, v1alpha1.ConditionValidated)
+	if validatedCondition != nil {
+		validatedCondition.ObservedGeneration = instance.Generation
+	}
+}

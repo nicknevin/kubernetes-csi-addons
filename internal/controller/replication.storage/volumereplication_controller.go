@@ -305,6 +305,8 @@ func (r *VolumeReplicationReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
+	refreshValidatedConditionGeneration(instance)
+
 	instance.Status.LastStartTime = getCurrentTime()
 	if err = r.Status().Update(ctx, instance); err != nil {
 		logger.Error(err, "failed to update status")
